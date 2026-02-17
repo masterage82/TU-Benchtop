@@ -1,0 +1,532 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Gantry Simulation</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body, #root { width: 100%; height: 100%; overflow: hidden; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/three@0.160.0/build/three.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+  <script type="text/babel" data-type="module">
+    const { useState, useEffect, useRef, useCallback, useMemo } = React;
+
+    // Mold dimensions in mm
+    const MOLD = { x: 200, y: 100, z: 100 };
+    const NOZZLE_DIAMETER = 8;
+    const LAYER_HEIGHT = 10;
+    const WALL_OFFSET = 6;
+    const PRINT_SPEED = 120;
+    const NUM_LAYERS = Math.floor(MOLD.z / LAYER_HEIGHT);
+    const S = 0.01; // mm to scene units
+
+    // Gantry & toolhead heights (scene units)
+    const GANTRY_TOP = 2.15;
+    const SYRINGE_BOTTOM = 1.3;
+    const BARREL_H = 0.55;
+    const STRAW_LENGTH = 1.4;
+
+    function generateToolpath() {
+      const layers = [];
+      for (let l = 0; l < NUM_LAYERS; l++) {
+        const z = LAYER_HEIGHT * (l + 0.5);
+        const pts = [];
+        const [ox, oy, mx, my] = [WALL_OFFSET, WALL_OFFSET, MOLD.x - WALL_OFFSET, MOLD.y - WALL_OFFSET];
+        pts.push({ x: ox, y: oy, z }, { x: mx, y: oy, z }, { x: mx, y: my, z }, { x: ox, y: my, z }, { x: ox, y: oy, z });
+        const spacing = NOZZLE_DIAMETER * 1.5;
+        let dir = 1;
+        for (let ix = ox + spacing; ix < mx - spacing / 2; ix += spacing) {
+          pts.push(dir === 1 ? { x: ix, y: oy + spacing, z } : { x: ix, y: my - spacing, z });
+          pts.push(dir === 1 ? { x: ix, y: my - spacing, z } : { x: ix, y: oy + spacing, z });
+          dir *= -1;
+        }
+        layers.push(pts);
+      }
+      return layers;
+    }
+
+    function interpolatePath(layers) {
+      const all = [];
+      for (let l = 0; l < layers.length; l++) {
+        const pts = layers[l];
+        for (let i = 0; i < pts.length - 1; i++) {
+          const a = pts[i], b = pts[i + 1];
+          const dx = b.x - a.x, dy = b.y - a.y;
+          const dist = Math.sqrt(dx * dx + dy * dy);
+          const steps = Math.max(1, Math.ceil(dist / PRINT_SPEED));
+          for (let s = 0; s <= steps; s++) {
+            const t = s / steps;
+            all.push({ x: a.x + dx * t, y: a.y + dy * t, z: a.z, layer: l });
+          }
+        }
+        if (l < layers.length - 1) {
+          const last = pts[pts.length - 1];
+          all.push({ x: last.x, y: last.y, z: last.z, layer: l, travel: true });
+          all.push({ x: layers[l + 1][0].x, y: layers[l + 1][0].y, z: layers[l + 1][0].z, layer: l + 1, travel: true });
+        }
+      }
+      return all;
+    }
+
+    function checkCollision(pos) {
+      const m = NOZZLE_DIAMETER / 2;
+      return pos.x < m || pos.x > MOLD.x - m || pos.y < m || pos.y > MOLD.y - m || pos.z < 0 || pos.z > MOLD.z + 5;
+    }
+
+    function GantrySimulation() {
+      const mountRef = useRef(null);
+      const sceneRef = useRef(null);
+      const rendererRef = useRef(null);
+      const cameraRef = useRef(null);
+      const frameRef = useRef(null);
+      const toolheadRef = useRef(null);
+      const printedRef = useRef([]);
+      const partsRef = useRef({});
+
+      const [playing, setPlaying] = useState(false);
+      const [step, setStep] = useState(0);
+      const [speed, setSpeed] = useState(1);
+      const [showGantry, setShowGantry] = useState(true);
+      const [collisionCount, setCollisionCount] = useState(0);
+      const [currentLayer, setCurrentLayer] = useState(0);
+
+      const toolpathLayers = useMemo(() => generateToolpath(), []);
+      const allPoints = useMemo(() => interpolatePath(toolpathLayers), [toolpathLayers]);
+      const totalSteps = allPoints.length;
+
+      const mouseRef = useRef({ isDown: false, x: 0, y: 0, rotX: -0.5, rotY: 0.6 });
+
+      const initScene = useCallback(() => {
+        if (!mountRef.current) return;
+        const w = mountRef.current.clientWidth, h = mountRef.current.clientHeight;
+
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x0a0e14);
+        scene.fog = new THREE.FogExp2(0x0a0e14, 0.12);
+        sceneRef.current = scene;
+
+        const camera = new THREE.PerspectiveCamera(50, w / h, 0.01, 100);
+        cameraRef.current = camera;
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(w, h);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        renderer.shadowMap.enabled = true;
+        renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+        mountRef.current.appendChild(renderer.domElement);
+        rendererRef.current = renderer;
+
+        // Lights
+        scene.add(new THREE.AmbientLight(0x404050, 0.8));
+        const dir = new THREE.DirectionalLight(0xffeedd, 1.2);
+        dir.position.set(5, 8, 5); dir.castShadow = true; scene.add(dir);
+        const pt = new THREE.PointLight(0x4488ff, 0.5, 10);
+        pt.position.set(-2, 3, -2); scene.add(pt);
+
+        // Ground
+        const ground = new THREE.Mesh(
+          new THREE.PlaneGeometry(20, 20),
+          new THREE.MeshStandardMaterial({ color: 0x12161e, roughness: 0.9 })
+        );
+        ground.rotation.x = -Math.PI / 2; ground.position.y = -0.01; ground.receiveShadow = true;
+        scene.add(ground);
+        scene.add(new THREE.GridHelper(8, 40, 0x1a2030, 0x141820));
+
+        // ========== MOLD ==========
+        const moldGeo = new THREE.BoxGeometry(MOLD.x * S, MOLD.z * S, MOLD.y * S);
+        const moldMesh = new THREE.Mesh(moldGeo, new THREE.MeshPhysicalMaterial({
+          color: 0x4488aa, transparent: true, opacity: 0.08, roughness: 0.1, metalness: 0.2, side: THREE.DoubleSide,
+        }));
+        moldMesh.position.set(MOLD.x * S / 2, MOLD.z * S / 2, MOLD.y * S / 2);
+        scene.add(moldMesh);
+
+        const wireframe = new THREE.LineSegments(
+          new THREE.EdgesGeometry(moldGeo),
+          new THREE.LineBasicMaterial({ color: 0x44aadd })
+        );
+        wireframe.position.copy(moldMesh.position);
+        scene.add(wireframe);
+
+        // ========== GANTRY FRAME ==========
+        const frameMat = new THREE.MeshStandardMaterial({ color: 0x334455, metalness: 0.8, roughness: 0.3 });
+        const railMat = new THREE.MeshStandardMaterial({ color: 0x667788, metalness: 0.9, roughness: 0.2 });
+        const gantryGroup = new THREE.Group();
+
+        // Pillars
+        const pillarGeo = new THREE.CylinderGeometry(0.03, 0.03, 2.4, 8);
+        [[-0.3, -0.3], [MOLD.x * S + 0.3, -0.3], [-0.3, MOLD.y * S + 0.3], [MOLD.x * S + 0.3, MOLD.y * S + 0.3]].forEach(([x, z]) => {
+          const p = new THREE.Mesh(pillarGeo, frameMat);
+          p.position.set(x, 1.2, z); p.castShadow = true; gantryGroup.add(p);
+        });
+
+        // X rails
+        const xRailGeo = new THREE.CylinderGeometry(0.02, 0.02, MOLD.x * S + 0.6, 8);
+        xRailGeo.rotateZ(Math.PI / 2);
+        [-0.3, MOLD.y * S + 0.3].forEach(z => {
+          const r = new THREE.Mesh(xRailGeo, railMat);
+          r.position.set(MOLD.x * S / 2, GANTRY_TOP, z); gantryGroup.add(r);
+        });
+
+        // Y beam (moves in X)
+        const yBeamGeo = new THREE.CylinderGeometry(0.025, 0.025, MOLD.y * S + 0.6, 8);
+        yBeamGeo.rotateX(Math.PI / 2);
+        const yBeam = new THREE.Mesh(yBeamGeo, new THREE.MeshStandardMaterial({ color: 0xff8844, metalness: 0.7, roughness: 0.3 }));
+        yBeam.position.set(0, GANTRY_TOP, MOLD.y * S / 2);
+        gantryGroup.add(yBeam);
+
+        // Z carriage
+        const zCarriage = new THREE.Mesh(
+          new THREE.BoxGeometry(0.08, 0.08, 0.08),
+          new THREE.MeshStandardMaterial({ color: 0xff6633, metalness: 0.6, roughness: 0.3 })
+        );
+        zCarriage.position.set(0, GANTRY_TOP, 0);
+        gantryGroup.add(zCarriage);
+
+        scene.add(gantryGroup);
+        partsRef.current.gantryGroup = gantryGroup;
+        partsRef.current.yBeam = yBeam;
+        partsRef.current.zCarriage = zCarriage;
+
+        // ========== TOOLHEAD: SYRINGE PUMP + RIGID STRAW ==========
+        const toolhead = new THREE.Group();
+        scene.add(toolhead);
+        toolheadRef.current = toolhead;
+
+        const metalM = new THREE.MeshStandardMaterial({ color: 0x889099, metalness: 0.85, roughness: 0.2 });
+        const darkM = new THREE.MeshStandardMaterial({ color: 0x445566, metalness: 0.9, roughness: 0.15 });
+
+        // Mounting bracket
+        const bracket = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.05, 0.12), darkM);
+        bracket.position.y = GANTRY_TOP - 0.03; bracket.castShadow = true; toolhead.add(bracket);
+
+        // Stepper motor
+        const motor = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.1, 0.1),
+          new THREE.MeshStandardMaterial({ color: 0x222833, metalness: 0.7, roughness: 0.4 }));
+        motor.position.y = SYRINGE_BOTTOM + BARREL_H + 0.12; motor.castShadow = true; toolhead.add(motor);
+
+        // Motor ring
+        const mRing = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 0.005, 16),
+          new THREE.MeshStandardMaterial({ color: 0xff6633, emissive: 0xff4400, emissiveIntensity: 0.3 }));
+        mRing.position.y = SYRINGE_BOTTOM + BARREL_H + 0.07; toolhead.add(mRing);
+
+        // Lead screw
+        const screw = new THREE.Mesh(new THREE.CylinderGeometry(0.007, 0.007, BARREL_H + 0.2, 8), metalM);
+        screw.position.y = SYRINGE_BOTTOM + BARREL_H / 2 + 0.05; toolhead.add(screw);
+
+        // Syringe barrel (transparent)
+        const barrel = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.06, 0.06, BARREL_H, 20, 1, true),
+          new THREE.MeshPhysicalMaterial({ color: 0xaaddff, transparent: true, opacity: 0.15, roughness: 0.05, metalness: 0.05, side: THREE.DoubleSide })
+        );
+        barrel.position.y = SYRINGE_BOTTOM + BARREL_H / 2; toolhead.add(barrel);
+
+        // Barrel rims
+        const rimGeo = new THREE.TorusGeometry(0.06, 0.005, 8, 20);
+        const rimMat = new THREE.MeshStandardMaterial({ color: 0x99aabb, metalness: 0.8, roughness: 0.2 });
+        [SYRINGE_BOTTOM + BARREL_H, SYRINGE_BOTTOM].forEach(y => {
+          const rim = new THREE.Mesh(rimGeo, rimMat); rim.rotation.x = Math.PI / 2; rim.position.y = y; toolhead.add(rim);
+        });
+
+        // Graduation marks
+        for (let i = 1; i <= 6; i++) {
+          const mk = new THREE.Mesh(new THREE.BoxGeometry(0.003, 0.001, 0.015), new THREE.MeshBasicMaterial({ color: 0x6688aa }));
+          mk.position.set(0.061, SYRINGE_BOTTOM + i * (BARREL_H / 7), 0); toolhead.add(mk);
+        }
+
+        // Plunger
+        const plunger = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.052, 0.052, 0.02, 20),
+          new THREE.MeshStandardMaterial({ color: 0x334455, metalness: 0.5, roughness: 0.4 })
+        );
+        plunger.position.y = SYRINGE_BOTTOM + BARREL_H - 0.03; toolhead.add(plunger);
+        partsRef.current.plunger = plunger;
+
+        // Plunger seal
+        const seal = new THREE.Mesh(
+          new THREE.TorusGeometry(0.052, 0.004, 6, 20),
+          new THREE.MeshStandardMaterial({ color: 0x222222, roughness: 0.9 })
+        );
+        seal.rotation.x = Math.PI / 2; seal.position.y = -0.005; plunger.add(seal);
+
+        // Concrete fill
+        const fillH = BARREL_H - 0.06;
+        const fill = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.051, 0.051, fillH, 20),
+          new THREE.MeshStandardMaterial({ color: 0xbbbbaa, roughness: 0.95 })
+        );
+        fill.position.y = SYRINGE_BOTTOM + fillH / 2 + 0.03; toolhead.add(fill);
+        partsRef.current.fill = fill;
+        partsRef.current.fillH = fillH;
+
+        // Luer-lock adapter
+        const adapt = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.015, 0.06, 12), metalM);
+        adapt.position.y = SYRINGE_BOTTOM - 0.03; toolhead.add(adapt);
+
+        // ===== RIGID STRAW =====
+        const strawTop = SYRINGE_BOTTOM - 0.06;
+        const strawBot = strawTop - STRAW_LENGTH;
+        const straw = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.009, 0.009, STRAW_LENGTH, 8),
+          new THREE.MeshStandardMaterial({ color: 0xaabbcc, metalness: 0.6, roughness: 0.3 })
+        );
+        straw.position.y = strawTop - STRAW_LENGTH / 2; straw.castShadow = true; toolhead.add(straw);
+
+        // Straw reinforcement rings
+        const rMat = new THREE.MeshStandardMaterial({ color: 0x778899, metalness: 0.8, roughness: 0.2 });
+        for (let i = 0; i < 6; i++) {
+          const ring = new THREE.Mesh(new THREE.TorusGeometry(0.012, 0.003, 6, 12), rMat);
+          ring.rotation.x = Math.PI / 2;
+          ring.position.y = strawTop - i * (STRAW_LENGTH / 6) - 0.08;
+          toolhead.add(ring);
+        }
+
+        // Straw tip (nozzle)
+        const tip = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.004, 0.011, 0.04, 8),
+          new THREE.MeshStandardMaterial({ color: 0xff6633, emissive: 0xff3300, emissiveIntensity: 0.5, metalness: 0.7, roughness: 0.3 })
+        );
+        tip.position.y = strawBot - 0.02; tip.castShadow = true; toolhead.add(tip);
+
+        // Extrusion glow
+        const glow = new THREE.Mesh(
+          new THREE.SphereGeometry(0.02, 16, 16),
+          new THREE.MeshBasicMaterial({ color: 0xff4400, transparent: true, opacity: 0.35 })
+        );
+        glow.position.y = strawBot - 0.04; toolhead.add(glow);
+        partsRef.current.glow = glow;
+        partsRef.current.strawBot = strawBot;
+
+        return () => {
+          renderer.dispose();
+          if (mountRef.current && renderer.domElement.parentNode === mountRef.current) {
+            mountRef.current.removeChild(renderer.domElement);
+          }
+        };
+      }, []);
+
+      // Init
+      useEffect(() => { const cleanup = initScene(); return cleanup; }, [initScene]);
+
+      // Draw printed lines
+      useEffect(() => {
+        const scene = sceneRef.current;
+        if (!scene) return;
+        printedRef.current.forEach(l => scene.remove(l));
+        printedRef.current = [];
+
+        const colors = [0xccccbb, 0xbbbbaa, 0xddddcc, 0xc0c0b0, 0xb8b8a8, 0xd0d0c0, 0xc8c8b8, 0xbcbcac, 0xd4d4c4, 0xc4c4b4];
+        let prev = null;
+        for (let i = 0; i <= Math.min(step, totalSteps - 1); i++) {
+          const p = allPoints[i];
+          if (prev && !p.travel && !prev.travel) {
+            const a = new THREE.Vector3(prev.x * S, prev.z * S, prev.y * S);
+            const b = new THREE.Vector3(p.x * S, p.z * S, p.y * S);
+            const d = new THREE.Vector3().subVectors(b, a);
+            const len = d.length();
+            if (len > 0.001) {
+              const mid = new THREE.Vector3().addVectors(a, b).multiplyScalar(0.5);
+              const cyl = new THREE.Mesh(
+                new THREE.CylinderGeometry(NOZZLE_DIAMETER * S * 0.4, NOZZLE_DIAMETER * S * 0.4, len, 4),
+                new THREE.MeshStandardMaterial({ color: colors[p.layer % colors.length], roughness: 0.85 })
+              );
+              cyl.position.copy(mid);
+              d.normalize();
+              cyl.setRotationFromQuaternion(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), d));
+              cyl.castShadow = true;
+              scene.add(cyl);
+              printedRef.current.push(cyl);
+            }
+          }
+          prev = p;
+        }
+      }, [step, allPoints, totalSteps]);
+
+      // Update toolhead position
+      useEffect(() => {
+        const th = toolheadRef.current;
+        if (!th || step >= totalSteps) return;
+        const p = allPoints[step];
+        const parts = partsRef.current;
+
+        const printY = p.z * S;
+        const offsetY = printY - parts.strawBot;
+        th.position.set(p.x * S, offsetY, p.y * S);
+
+        if (parts.yBeam) {
+          parts.yBeam.position.x = p.x * S;
+          parts.zCarriage.position.x = p.x * S;
+          parts.zCarriage.position.z = p.y * S;
+          parts.gantryGroup.visible = showGantry;
+        }
+
+        setCurrentLayer(p.layer);
+
+        const progress01 = step / (totalSteps - 1);
+        if (parts.plunger) {
+          const top = SYRINGE_BOTTOM + BARREL_H - 0.03;
+          const bot = SYRINGE_BOTTOM + 0.03;
+          parts.plunger.position.y = top - progress01 * (top - bot);
+        }
+        if (parts.fill) {
+          const remaining = 1.0 - progress01;
+          parts.fill.scale.y = Math.max(0.01, remaining);
+          parts.fill.position.y = SYRINGE_BOTTOM + 0.03 + remaining * parts.fillH / 2;
+        }
+        if (parts.glow) {
+          const isTravel = p.travel;
+          parts.glow.visible = !isTravel;
+          parts.glow.material.opacity = isTravel ? 0 : 0.25 + Math.sin(Date.now() * 0.01) * 0.1;
+        }
+
+        if (checkCollision(p)) setCollisionCount(c => c + 1);
+      }, [step, allPoints, totalSteps, showGantry]);
+
+      // Render loop
+      useEffect(() => {
+        const scene = sceneRef.current, camera = cameraRef.current, renderer = rendererRef.current;
+        if (!scene || !camera || !renderer) return;
+        let id;
+        const animate = () => {
+          id = requestAnimationFrame(animate);
+          const m = mouseRef.current;
+          const dist = 4.8;
+          const cx = MOLD.x * S / 2, cy = MOLD.z * S / 2 + 0.3, cz = MOLD.y * S / 2;
+          camera.position.set(
+            cx + dist * Math.sin(m.rotY) * Math.cos(m.rotX),
+            1.5 + dist * Math.sin(-m.rotX),
+            cz + dist * Math.cos(m.rotY) * Math.cos(m.rotX)
+          );
+          camera.lookAt(cx, cy, cz);
+          renderer.render(scene, camera);
+        };
+        animate();
+        return () => cancelAnimationFrame(id);
+      }, []);
+
+      // Playback
+      useEffect(() => {
+        if (!playing) return;
+        const iv = setInterval(() => {
+          setStep(s => {
+            if (s >= totalSteps - 1) { setPlaying(false); return s; }
+            return Math.min(s + speed, totalSteps - 1);
+          });
+        }, 16);
+        return () => clearInterval(iv);
+      }, [playing, speed, totalSteps]);
+
+      // Mouse orbit
+      useEffect(() => {
+        const el = mountRef.current;
+        if (!el) return;
+        const onDown = e => { mouseRef.current.isDown = true; mouseRef.current.x = e.clientX || e.touches?.[0]?.clientX; mouseRef.current.y = e.clientY || e.touches?.[0]?.clientY; };
+        const onUp = () => { mouseRef.current.isDown = false; };
+        const onMove = e => {
+          if (!mouseRef.current.isDown) return;
+          const cx = e.clientX || e.touches?.[0]?.clientX, cy = e.clientY || e.touches?.[0]?.clientY;
+          mouseRef.current.rotY += (cx - mouseRef.current.x) * 0.005;
+          mouseRef.current.rotX = Math.max(-1.2, Math.min(0.2, mouseRef.current.rotX + (cy - mouseRef.current.y) * 0.005));
+          mouseRef.current.x = cx; mouseRef.current.y = cy;
+        };
+        el.addEventListener("mousedown", onDown); el.addEventListener("touchstart", onDown);
+        window.addEventListener("mouseup", onUp); window.addEventListener("touchend", onUp);
+        window.addEventListener("mousemove", onMove); window.addEventListener("touchmove", onMove);
+        return () => {
+          el.removeEventListener("mousedown", onDown); el.removeEventListener("touchstart", onDown);
+          window.removeEventListener("mouseup", onUp); window.removeEventListener("touchend", onUp);
+          window.removeEventListener("mousemove", onMove); window.removeEventListener("touchmove", onMove);
+        };
+      }, []);
+
+      // Resize
+      useEffect(() => {
+        const onResize = () => {
+          if (!mountRef.current || !cameraRef.current || !rendererRef.current) return;
+          const w = mountRef.current.clientWidth, h = mountRef.current.clientHeight;
+          cameraRef.current.aspect = w / h; cameraRef.current.updateProjectionMatrix();
+          rendererRef.current.setSize(w, h);
+        };
+        window.addEventListener("resize", onResize);
+        return () => window.removeEventListener("resize", onResize);
+      }, []);
+
+      const currentPt = step < totalSteps ? allPoints[step] : allPoints[totalSteps - 1];
+      const progress = ((step / (totalSteps - 1)) * 100).toFixed(1);
+
+      return (
+        <div style={{ width: "100%", height: "100vh", background: "#0a0e14", fontFamily: "'JetBrains Mono', 'SF Mono', monospace", color: "#c8cdd5", display: "flex", flexDirection: "column", overflow: "hidden", userSelect: "none" }}>
+          {/* Header */}
+          <div style={{ padding: "12px 20px", display: "flex", alignItems: "center", justifyContent: "space-between", borderBottom: "1px solid #1a2030", background: "#0d1118", flexShrink: 0 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+              <div style={{ width: 8, height: 8, borderRadius: "50%", background: playing ? "#44ff88" : "#ff8844", boxShadow: playing ? "0 0 8px #44ff88" : "0 0 8px #ff8844" }} />
+              <span style={{ fontSize: 13, fontWeight: 600, letterSpacing: 1.5, color: "#8899aa" }}>GANTRY SIM</span>
+              <span style={{ fontSize: 11, color: "#556677" }}>SYRINGE + STRAW &middot; {MOLD.x}&times;{MOLD.y}&times;{MOLD.z}mm</span>
+            </div>
+            <div style={{ display: "flex", gap: 16, fontSize: 11 }}>
+              <span>FILL <span style={{ color: "#bbbbaa" }}>{(100 - parseFloat(progress)).toFixed(0)}%</span></span>
+              <span>LAYER <span style={{ color: "#ff8844" }}>{currentLayer + 1}/{NUM_LAYERS}</span></span>
+              <span>COLLISIONS <span style={{ color: collisionCount > 0 ? "#ff4444" : "#44ff88" }}>{collisionCount}</span></span>
+              <span>PROGRESS <span style={{ color: "#4488ff" }}>{progress}%</span></span>
+            </div>
+          </div>
+
+          {/* Viewport */}
+          <div ref={mountRef} style={{ flex: 1, cursor: "grab", position: "relative" }}>
+            <div style={{ position: "absolute", top: 12, left: 16, fontSize: 10, color: "#445566", lineHeight: 1.6 }}>
+              <div>DRAG TO ROTATE</div>
+              <div>SYRINGE PUMP + RIGID STRAW &middot; NOZZLE &Oslash;{NOZZLE_DIAMETER}mm &middot; LAYER {LAYER_HEIGHT}mm</div>
+            </div>
+            <div style={{ position: "absolute", top: 12, right: 16, fontSize: 10, color: "#556677", textAlign: "right", lineHeight: 1.8, fontVariantNumeric: "tabular-nums" }}>
+              <div>X <span style={{ color: "#ff6644" }}>{currentPt?.x?.toFixed(1) || "0.0"}</span></div>
+              <div>Y <span style={{ color: "#44cc66" }}>{currentPt?.y?.toFixed(1) || "0.0"}</span></div>
+              <div>Z <span style={{ color: "#4488ff" }}>{currentPt?.z?.toFixed(1) || "0.0"}</span></div>
+            </div>
+          </div>
+
+          {/* Controls */}
+          <div style={{ padding: "14px 20px", borderTop: "1px solid #1a2030", background: "#0d1118", display: "flex", flexDirection: "column", gap: 10, flexShrink: 0 }}>
+            <input type="range" min={0} max={totalSteps - 1} value={step} onChange={e => setStep(parseInt(e.target.value))} style={{ width: "100%", accentColor: "#ff8844", height: 4, cursor: "pointer" }} />
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button onClick={() => { if (step >= totalSteps - 1) setStep(0); setPlaying(!playing); }}
+                  style={{ background: playing ? "#ff4444" : "#44ff88", color: "#0a0e14", border: "none", borderRadius: 4, padding: "6px 16px", fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", letterSpacing: 1 }}>
+                  {playing ? "PAUSE" : step >= totalSteps - 1 ? "REPLAY" : "PLAY"}
+                </button>
+                <button onClick={() => { setPlaying(false); setStep(0); setCollisionCount(0); }}
+                  style={{ background: "transparent", color: "#667788", border: "1px solid #2a3040", borderRadius: 4, padding: "6px 12px", fontSize: 11, cursor: "pointer", fontFamily: "inherit", letterSpacing: 1 }}>
+                  RESET
+                </button>
+                <button onClick={() => setShowGantry(!showGantry)}
+                  style={{ background: "transparent", color: showGantry ? "#ff8844" : "#445566", border: `1px solid ${showGantry ? "#ff8844" : "#2a3040"}`, borderRadius: 4, padding: "6px 12px", fontSize: 11, cursor: "pointer", fontFamily: "inherit", letterSpacing: 1 }}>
+                  GANTRY
+                </button>
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <span style={{ fontSize: 10, color: "#556677" }}>SPEED</span>
+                {[1, 3, 8, 20].map(s => (
+                  <button key={s} onClick={() => setSpeed(s)}
+                    style={{ background: speed === s ? "#2a3555" : "transparent", color: speed === s ? "#ff8844" : "#556677", border: `1px solid ${speed === s ? "#3a4565" : "#1a2030"}`, borderRadius: 3, padding: "3px 8px", fontSize: 10, cursor: "pointer", fontFamily: "inherit" }}>
+                    {s}&times;
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    const root = ReactDOM.createRoot(document.getElementById("root"));
+    root.render(<GantrySimulation />);
+  </script>
+</body>
+</html>
