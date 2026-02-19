@@ -20,17 +20,20 @@
   <script type="text/babel" data-type="module">
     const { useState, useEffect, useRef, useCallback, useMemo } = React;
 
-    // Mold dimensions in mm
+    // Mold cavity dimensions in mm
     const MOLD = { x: 200, y: 100, z: 100 };
+    const PRINTER = { x: 500, y: 500, z: 500 }; // Rat Rig V-Core 4.1 500mm build volume
+    const WALL_THICKNESS = 10; // mold wall thickness in mm
     const NOZZLE_DIAMETER = 8;
     const LAYER_HEIGHT = 10;
     const WALL_OFFSET = 6;
     const PRINT_SPEED = 120;
     const NUM_LAYERS = Math.floor(MOLD.z / LAYER_HEIGHT);
     const S = 0.01; // mm to scene units
+    const WT = WALL_THICKNESS * S; // mold wall thickness in scene units
 
     // Gantry & toolhead heights (scene units)
-    const GANTRY_TOP = 2.15;
+    const GANTRY_TOP = 6.5;
     const SYRINGE_BOTTOM = 1.3;
     const BARREL_H = 0.55;
     const STRAW_LENGTH = 1.4;
@@ -111,7 +114,7 @@
 
         const scene = new THREE.Scene();
         scene.background = new THREE.Color(0x0a0e14);
-        scene.fog = new THREE.FogExp2(0x0a0e14, 0.12);
+        scene.fog = new THREE.FogExp2(0x0a0e14, 0.04);
         sceneRef.current = scene;
 
         const camera = new THREE.PerspectiveCamera(50, w / h, 0.01, 100);
@@ -139,22 +142,28 @@
         );
         ground.rotation.x = -Math.PI / 2; ground.position.y = -0.01; ground.receiveShadow = true;
         scene.add(ground);
-        scene.add(new THREE.GridHelper(8, 40, 0x1a2030, 0x141820));
+        scene.add(new THREE.GridHelper(20, 60, 0x1a2030, 0x141820));
 
-        // ========== MOLD ==========
-        const moldGeo = new THREE.BoxGeometry(MOLD.x * S, MOLD.z * S, MOLD.y * S);
-        const moldMesh = new THREE.Mesh(moldGeo, new THREE.MeshPhysicalMaterial({
-          color: 0x4488aa, transparent: true, opacity: 0.08, roughness: 0.1, metalness: 0.2, side: THREE.DoubleSide,
-        }));
-        moldMesh.position.set(MOLD.x * S / 2, MOLD.z * S / 2, MOLD.y * S / 2);
-        scene.add(moldMesh);
-
-        const wireframe = new THREE.LineSegments(
-          new THREE.EdgesGeometry(moldGeo),
-          new THREE.LineBasicMaterial({ color: 0x44aadd })
+        // ========== MOLD WITH WALLS (10mm thick) ==========
+        const moldMat = new THREE.MeshStandardMaterial({ color: 0x667788, roughness: 0.85, metalness: 0.05 });
+        const mx = MOLD.x * S, mz = MOLD.z * S, my = MOLD.y * S;
+        [
+          [mx + 2*WT, WT,  my + 2*WT,  mx/2,       -WT/2,    my/2    ], // bottom floor
+          [mx + 2*WT, mz,  WT,          mx/2,        mz/2,   -WT/2   ], // front wall
+          [mx + 2*WT, mz,  WT,          mx/2,        mz/2,    my+WT/2], // back wall
+          [WT,        mz,  my,          -WT/2,       mz/2,    my/2    ], // left wall
+          [WT,        mz,  my,           mx+WT/2,    mz/2,    my/2    ], // right wall
+        ].forEach(([w, h, d, px, py, pz]) => {
+          const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), moldMat);
+          m.position.set(px, py, pz); m.castShadow = true; m.receiveShadow = true;
+          scene.add(m);
+        });
+        const cavityWire = new THREE.LineSegments(
+          new THREE.EdgesGeometry(new THREE.BoxGeometry(mx, mz, my)),
+          new THREE.LineBasicMaterial({ color: 0x44aadd, transparent: true, opacity: 0.6 })
         );
-        wireframe.position.copy(moldMesh.position);
-        scene.add(wireframe);
+        cavityWire.position.set(mx/2, mz/2, my/2);
+        scene.add(cavityWire);
 
         // ========== GANTRY FRAME ==========
         const frameMat = new THREE.MeshStandardMaterial({ color: 0x334455, metalness: 0.8, roughness: 0.3 });
@@ -162,25 +171,25 @@
         const gantryGroup = new THREE.Group();
 
         // Pillars
-        const pillarGeo = new THREE.CylinderGeometry(0.03, 0.03, 2.4, 8);
-        [[-0.3, -0.3], [MOLD.x * S + 0.3, -0.3], [-0.3, MOLD.y * S + 0.3], [MOLD.x * S + 0.3, MOLD.y * S + 0.3]].forEach(([x, z]) => {
+        const pillarGeo = new THREE.CylinderGeometry(0.03, 0.03, 7.0, 8);
+        [[-0.3, -0.3], [PRINTER.x * S + 0.3, -0.3], [-0.3, PRINTER.y * S + 0.3], [PRINTER.x * S + 0.3, PRINTER.y * S + 0.3]].forEach(([x, z]) => {
           const p = new THREE.Mesh(pillarGeo, frameMat);
-          p.position.set(x, 1.2, z); p.castShadow = true; gantryGroup.add(p);
+          p.position.set(x, 3.5, z); p.castShadow = true; gantryGroup.add(p);
         });
 
         // X rails
-        const xRailGeo = new THREE.CylinderGeometry(0.02, 0.02, MOLD.x * S + 0.6, 8);
+        const xRailGeo = new THREE.CylinderGeometry(0.02, 0.02, PRINTER.x * S + 0.6, 8);
         xRailGeo.rotateZ(Math.PI / 2);
-        [-0.3, MOLD.y * S + 0.3].forEach(z => {
+        [-0.3, PRINTER.y * S + 0.3].forEach(z => {
           const r = new THREE.Mesh(xRailGeo, railMat);
-          r.position.set(MOLD.x * S / 2, GANTRY_TOP, z); gantryGroup.add(r);
+          r.position.set(PRINTER.x * S / 2, GANTRY_TOP, z); gantryGroup.add(r);
         });
 
         // Y beam (moves in X)
-        const yBeamGeo = new THREE.CylinderGeometry(0.025, 0.025, MOLD.y * S + 0.6, 8);
+        const yBeamGeo = new THREE.CylinderGeometry(0.025, 0.025, PRINTER.y * S + 0.6, 8);
         yBeamGeo.rotateX(Math.PI / 2);
         const yBeam = new THREE.Mesh(yBeamGeo, new THREE.MeshStandardMaterial({ color: 0xff8844, metalness: 0.7, roughness: 0.3 }));
-        yBeam.position.set(0, GANTRY_TOP, MOLD.y * S / 2);
+        yBeam.position.set(0, GANTRY_TOP, PRINTER.y * S / 2);
         gantryGroup.add(yBeam);
 
         // Z carriage
@@ -398,7 +407,7 @@
         const animate = () => {
           id = requestAnimationFrame(animate);
           const m = mouseRef.current;
-          const dist = 4.8;
+          const dist = 8;
           const cx = MOLD.x * S / 2, cy = MOLD.z * S / 2 + 0.3, cz = MOLD.y * S / 2;
           camera.position.set(
             cx + dist * Math.sin(m.rotY) * Math.cos(m.rotX),
@@ -469,7 +478,7 @@
             <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
               <div style={{ width: 8, height: 8, borderRadius: "50%", background: playing ? "#44ff88" : "#ff8844", boxShadow: playing ? "0 0 8px #44ff88" : "0 0 8px #ff8844" }} />
               <span style={{ fontSize: 13, fontWeight: 600, letterSpacing: 1.5, color: "#8899aa" }}>GANTRY SIM</span>
-              <span style={{ fontSize: 11, color: "#556677" }}>SYRINGE + STRAW &middot; {MOLD.x}&times;{MOLD.y}&times;{MOLD.z}mm</span>
+              <span style={{ fontSize: 11, color: "#556677" }}>V-CORE 4.1 500mm &middot; MOLD {MOLD.x}&times;{MOLD.y}&times;{MOLD.z}mm</span>
             </div>
             <div style={{ display: "flex", gap: 16, fontSize: 11 }}>
               <span>FILL <span style={{ color: "#bbbbaa" }}>{(100 - parseFloat(progress)).toFixed(0)}%</span></span>
