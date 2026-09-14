@@ -1,0 +1,1942 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ytong Shed &amp; Carport</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+  :root {
+    --ink:   #e9f1ef;
+    --dim:   rgba(233, 241, 239, 0.58);
+    --amber: #ffb45c;              /* annunciator, active controls, dimension lines */
+    --live:  #6fe3a3;
+    --rule:  rgba(233, 241, 239, 0.26);
+    --track: rgba(233, 241, 239, 0.20);
+    --smoke: 8, 20, 14;            /* scrim base, biased to the garden's deep green */
+  }
+  html, body { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: #0d1a12; }
+  body { font-family: "Barlow Condensed", "Helvetica Neue", Arial, sans-serif; color: var(--ink); }
+  #c { display: block; width: 100vw; height: 100vh; touch-action: none; cursor: grab; }
+  #c.dragging { cursor: grabbing; }
+
+  /* Overlays are scrims over the render, not cards on top of it. */
+  .scrim { position: fixed; pointer-events: none; user-select: none; }
+
+  #hud {
+    top: 0; left: 0; padding: 20px 76px 44px 24px;
+    background: linear-gradient(148deg, rgba(var(--smoke), 0.62) 0%, rgba(var(--smoke), 0.34) 44%, rgba(var(--smoke), 0) 76%);
+  }
+  #annun { display: flex; align-items: center; gap: 9px; }
+  #dot { width: 7px; height: 7px; border-radius: 50%; background: var(--live); box-shadow: 0 0 8px var(--live); }
+  #dot.off { background: rgba(233, 241, 239, 0.28); box-shadow: none; }
+  #phase {
+    font-size: 27px; font-weight: 600; line-height: 1;
+    letter-spacing: 0.07em; text-transform: uppercase; color: var(--amber);
+  }
+  #sub {
+    margin-top: 6px; font-size: 11px; font-weight: 500; letter-spacing: 0.15em;
+    text-transform: uppercase; color: var(--dim);
+  }
+  /* The spec block is content: real numbers the study is about. */
+  #tele {
+    margin-top: 13px; display: grid; grid-template-columns: auto auto auto; gap: 3px 10px;
+    border-left: 1px solid var(--rule); padding-left: 11px;
+  }
+  #tele .k {
+    font-size: 11px; font-weight: 500; letter-spacing: 0.15em;
+    text-transform: uppercase; color: var(--dim); align-self: center;
+  }
+  #tele .v {
+    font-family: "IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace;
+    font-size: 14px; font-weight: 500; font-variant-numeric: tabular-nums;
+    text-align: right; line-height: 1.35; white-space: nowrap;
+  }
+  #tele .u { font-size: 11px; letter-spacing: 0.08em; color: var(--dim); align-self: center; }
+
+  #bar {
+    left: 0; right: 0; bottom: 0; padding: 40px 24px 15px;
+    background: linear-gradient(to top, rgba(var(--smoke), 0.5), rgba(var(--smoke), 0) 100%);
+    display: flex; align-items: flex-end; gap: 22px;
+  }
+  #ctl { display: flex; gap: 8px; flex-wrap: wrap; pointer-events: auto; }
+  .btn {
+    pointer-events: auto; appearance: none; -webkit-appearance: none;
+    background: rgba(var(--smoke), 0.38); border: 1px solid var(--rule); border-radius: 2px;
+    color: var(--ink); font-family: inherit; font-size: 11px; font-weight: 500; line-height: 1;
+    letter-spacing: 0.15em; text-transform: uppercase; padding: 9px 12px; cursor: pointer;
+    transition: border-color 0.2s, color 0.2s;
+  }
+  .btn:hover { border-color: var(--ink); }
+  .btn.on { color: var(--amber); border-color: var(--amber); }
+  .btn:focus-visible { outline: 2px solid var(--amber); outline-offset: 2px; }
+  .btn .val {
+    font-family: "IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace;
+    font-size: 11px; letter-spacing: 0.04em; text-transform: none; color: var(--amber); margin-left: 8px;
+  }
+  #hint {
+    margin-left: auto; font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase;
+    color: var(--dim); white-space: nowrap; transition: color 0.5s;
+  }
+  #hint.manual { color: var(--amber); }
+
+  @media (prefers-reduced-motion: reduce) { .btn, #hint { transition: none; } }
+  @media (max-width: 560px) {
+    #hud { padding-right: 24px; }
+    #phase { font-size: 21px; }
+    #hint { display: none; }
+  }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="hud" class="scrim">
+  <div id="annun"><span id="dot"></span><span id="phase">Shed + Carport</span></div>
+  <div id="sub">Ytong &middot; rendered &middot; one RC slab</div>
+  <div id="tele"></div>
+</div>
+<div id="bar" class="scrim">
+  <div id="ctl">
+    <button id="bDim" class="btn" type="button" aria-pressed="false">Dimensions</button>
+    <button id="bSun" class="btn" type="button">Sun<span class="val" id="sunVal">Noon</span></button>
+    <button id="bGhost" class="btn" type="button" aria-pressed="false">Ghost slab</button>
+    <button id="bExpl" class="btn" type="button" aria-pressed="false">Exploded</button>
+    <button id="bBuild" class="btn" type="button">Build<span class="val" id="buildVal"></span></button>
+  </div>
+  <div id="hint">Drag to orbit &middot; Scroll to zoom</div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/0.160.1/three.min.js"></script>
+<script>
+(function () {
+'use strict';
+
+/* ---------------------------------------------------------------------------
+ * DIMENSIONS (metres, 1 world unit = 1 m). Every piece of geometry derives
+ * from these constants; change them here and the building, the dimension
+ * lines and the HUD spec block all follow.
+ * ------------------------------------------------------------------------- */
+const SHED_W    = 4.00;   // shed outer width (x)
+const SHED_D    = 4.00;   // shed outer depth (z); the carport shares this depth
+const WALL_H    = 3.00;   // finished floor to slab underside
+const WALL_T    = 0.30;   // Ytong wall thickness (300 mm blocks, thin-bed joints)
+const CARPORT_W = 4.00;   // carport clear width (x): shared wall face to column outer face
+const COL       = 0.36;   // column section, square, Ytong (rendered like the walls)
+const SLAB_T    = 0.20;   // reinforced concrete slab thickness
+const OVERHANG  = 0.30;   // slab overhang beyond wall / column outer faces, all round
+const SLAB_FALL = 0.04;   // extra top-surface height at the front edge: ~1:115 fall to the back
+const CHAMFER   = 0.06;   // drip-edge chamfer on the underside of the overhang
+const PLINTH_H  = 0.30;   // darker plinth band at the foot of the render
+const FLOOR_T   = 0.15;   // slab-on-grade thickness
+const GROUND_Y  = -0.12;  // garden ground level; finished floor is y = 0
+const PAVE_Y    = -0.06;  // top of paving (path / driveway)
+const DOOR_W    = 1.00, DOOR_H = 2.10;   // both doors: one centred in the front wall, one in the back
+const HUMAN_H   = 1.80;   // scale figure
+const HIP_Y     = 1.00, SHOULDER_Y = 1.58, ARM_LEN = 0.66;   // the figure's working joints
+const BLK_L     = 0.625, BLK_H = 0.25;   // Ytong block face: 625 long x 250 high; WALL_T deep. 3.00 / 0.25 = 12 courses
+const LINTEL_H  = 0.25;   // reinforced Ytong lintel over each door opening
+const LINTEL_B  = 0.20;   // its bearing on the blockwork either side of the opening
+const MIN_PIECE = 0.10;   // shortest piece a course is cut into; a joint that would leave less is dropped
+
+// Derived plan geometry
+const CARPORT_D = SHED_D;
+const X0 = -CARPORT_W, X1 = 0, X2 = SHED_W;        // carport X0..X1 (west), shed X1..X2 (east)
+const Z0 = -SHED_D / 2, Z1 = SHED_D / 2;           // front (south) face at Z0, back at Z1
+const SLAB_W = SHED_W + CARPORT_W + 2 * OVERHANG;  // 8.60
+const SLAB_D = SHED_D + 2 * OVERHANG;              // 4.60
+const SLAB_Y = WALL_H;                             // slab underside
+const SLAB_TOP = SLAB_Y + SLAB_T;                  // slab top at the back edge (front is +SLAB_FALL)
+const SHED_CX = (X1 + X2) / 2;                                     // +2.00, shed centre line
+const DOOR_X0 = SHED_CX - DOOR_W / 2, DOOR_X1 = SHED_CX + DOOR_W / 2;   // 1.50 .. 2.50
+const COL_Z = [Z0, Z1 - COL];                                      // z start of each column
+const DOOR_OP = { a0: DOOR_X0, a1: DOOR_X1, y0: 0, y1: DOOR_H };   // door opening, in (run, height)
+const LINTEL_OP = { a0: DOOR_X0 - LINTEL_B, a1: DOOR_X1 + LINTEL_B, y0: DOOR_H, y1: DOOR_H + LINTEL_H };
+const DRIVE_Z = -9.5;                                              // driveway runs from here to the carport
+const PATH_Z = -4.2;                                               // door path turns here
+
+/* ---------------------------------------------------------------------------
+ * Small math helpers
+ * ------------------------------------------------------------------------- */
+const clamp = (x, a, b) => Math.min(b, Math.max(a, x));
+const lerp = (a, b, u) => a + (b - a) * u;
+const smoothstep = (e0, e1, x) => { const u = clamp((x - e0) / (e1 - e0), 0, 1); return u * u * (3 - 2 * u); };
+const damp = (lambda, dt) => 1 - Math.exp(-lambda * dt);
+
+// Deterministic RNG (mulberry32) so the garden is identical on every load.
+function mulberry32(seed) {
+  return function () {
+    seed |= 0; seed = seed + 0x6D2B79F5 | 0;
+    let t = Math.imul(seed ^ seed >>> 15, 1 | seed);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+}
+const rng = mulberry32(2024);
+
+// Value noise + fbm (non-tiling, for terrain and ground colour).
+function hash2(x, y) { const s = Math.sin(x * 127.1 + y * 311.7) * 43758.5453; return s - Math.floor(s); }
+function vnoise(x, y) {
+  const xi = Math.floor(x), yi = Math.floor(y);
+  const xf = x - xi, yf = y - yi;
+  const u = xf * xf * (3 - 2 * xf), v = yf * yf * (3 - 2 * yf);
+  const a = hash2(xi, yi), b = hash2(xi + 1, yi), c = hash2(xi, yi + 1), d = hash2(xi + 1, yi + 1);
+  return lerp(lerp(a, b, u), lerp(c, d, u), v);
+}
+function fbm(x, y) {
+  let s = 0, amp = 0.5, f = 1;
+  for (let i = 0; i < 4; i++) { s += amp * vnoise(x * f, y * f); f *= 2.13; amp *= 0.5; }
+  return s; // ~0..1, mean ~0.5
+}
+// Tiling variant: the lattice wraps at integer period P, so textures built from it are seamless.
+function hashP(x, y, P, salt) { x = ((x % P) + P) % P; y = ((y % P) + P) % P; return hash2(x + salt * 17.3, y + salt * 5.1); }
+function vnoiseP(x, y, P, salt) {
+  const xi = Math.floor(x), yi = Math.floor(y);
+  const xf = x - xi, yf = y - yi;
+  const u = xf * xf * (3 - 2 * xf), v = yf * yf * (3 - 2 * yf);
+  const a = hashP(xi, yi, P, salt), b = hashP(xi + 1, yi, P, salt), c = hashP(xi, yi + 1, P, salt), d = hashP(xi + 1, yi + 1, P, salt);
+  return lerp(lerp(a, b, u), lerp(c, d, u), v);
+}
+function fbmP(x, y, P, oct, salt) {
+  let s = 0, amp = 0.5, f = 1;
+  for (let i = 0; i < oct; i++) { s += amp * vnoiseP(x * f, y * f, P * f, salt + i); f *= 2; amp *= 0.5; }
+  return s;
+}
+// M x M grid of tiling fbm, sampled bilinearly (cheaper than per-pixel fbm on a 1k texture).
+function tileNoise(M, P, oct, salt) {
+  const a = new Float32Array(M * M);
+  for (let y = 0; y < M; y++) for (let x = 0; x < M; x++) a[y * M + x] = fbmP(x / M * P, y / M * P, P, oct, salt);
+  return a;
+}
+function sampleTile(arr, M, u, v) {
+  const x = u * M, y = v * M;
+  const xi = Math.floor(x), yi = Math.floor(y), fx = x - xi, fy = y - yi;
+  const x0 = xi % M, x1 = (xi + 1) % M, y0 = yi % M, y1 = (yi + 1) % M;
+  return lerp(lerp(arr[y0 * M + x0], arr[y0 * M + x1], fx), lerp(arr[y1 * M + x0], arr[y1 * M + x1], fx), fy);
+}
+
+/* ---------------------------------------------------------------------------
+ * Renderer / scene / lights
+ * ------------------------------------------------------------------------- */
+const canvas = document.getElementById('c');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+renderer.setSize(window.innerWidth, window.innerHeight, false);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.0;
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+
+const FOG_COLOR = new THREE.Color(0xd9e7ec);
+const scene = new THREE.Scene();
+scene.fog = new THREE.Fog(FOG_COLOR, 45, 150);   // very light: only the far garden edge softens
+renderer.setClearColor(FOG_COLOR);
+
+const camera = new THREE.PerspectiveCamera(42, window.innerWidth / window.innerHeight, 0.1, 400);
+
+const reducedMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+// Sun. Presets are cycled by the Sun button; the light tweens between them.
+// Compass: +x = east, +z = north, so the shed's front (Z0) faces south.
+const SUN_PRESETS = [
+  { name: 'Morning',   dir: new THREE.Vector3(0.78, 0.50, -0.42), color: new THREE.Color(0xffe3bd), intensity: 2.5, hemi: 0.60, horizon: new THREE.Color(0xdfe6df) },
+  // Noon is deliberately ~54 deg, not overhead: the slab's shadow then covers the back 2.4 m of the
+  // carport floor and most of the shared wall with a diagonal edge, leaving a sunlit strip at the front.
+  { name: 'Noon',      dir: new THREE.Vector3(0.30, 0.82, -0.52), color: new THREE.Color(0xfff4e6), intensity: 2.9, hemi: 0.70, horizon: new THREE.Color(0xd9e7ec) },
+  { name: 'Afternoon', dir: new THREE.Vector3(-0.80, 0.42, -0.42), color: new THREE.Color(0xffcf9c), intensity: 2.2, hemi: 0.52, horizon: new THREE.Color(0xe9dccb) },
+];
+for (const p of SUN_PRESETS) p.dir.normalize();
+let sunIdx = 1;   // opens on Noon: the deep slab shadow in the carport is the hero condition
+const sunDir = SUN_PRESETS[sunIdx].dir.clone();
+const SUN_TARGET = new THREE.Vector3(0, 1.5, 0);
+
+const sun = new THREE.DirectionalLight(SUN_PRESETS[sunIdx].color, SUN_PRESETS[sunIdx].intensity);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+sun.shadow.camera.near = 1;
+sun.shadow.camera.far = 80;
+sun.shadow.camera.left = -13; sun.shadow.camera.right = 13;
+sun.shadow.camera.top = 13; sun.shadow.camera.bottom = -13;
+sun.shadow.bias = -0.0005;
+sun.shadow.normalBias = 0.03;
+sun.target.position.copy(SUN_TARGET);
+scene.add(sun);
+scene.add(sun.target);
+function placeSun() { sun.position.copy(SUN_TARGET).addScaledVector(sunDir, 30); }
+placeSun();
+
+// Hemisphere fill: sky blue from above, green bounce off the planting from below.
+const hemi = new THREE.HemisphereLight(0xbfdcff, 0x4f7a36, SUN_PRESETS[sunIdx].hemi);
+scene.add(hemi);
+
+// Sky: inverted sphere with a procedural gradient + sun glow.
+const skyMat = new THREE.ShaderMaterial({
+  side: THREE.BackSide, depthWrite: false, fog: false,
+  uniforms: {
+    uZenith: { value: new THREE.Color(0x3b86d8) },
+    uHorizon: { value: FOG_COLOR.clone() },
+    uBelow: { value: new THREE.Color(0x2f4a2a) },
+    uSunDir: { value: sunDir.clone() },
+  },
+  vertexShader: `
+    varying vec3 vDir;
+    void main() { vDir = normalize(position); gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
+  fragmentShader: `
+    uniform vec3 uZenith, uHorizon, uBelow, uSunDir;
+    varying vec3 vDir;
+    void main() {
+      float y = vDir.y;
+      vec3 col = mix(uHorizon, uZenith, pow(smoothstep(0.0, 0.7, y), 0.6));
+      col = mix(uBelow, col, smoothstep(-0.08, 0.0, y));
+      float s = max(dot(vDir, uSunDir), 0.0);
+      col += vec3(1.0, 0.9, 0.7) * (pow(s, 600.0) * 1.2 + pow(s, 12.0) * 0.12);
+      gl_FragColor = vec4(col, 1.0);
+      #include <tonemapping_fragment>
+      #include <colorspace_fragment>
+    }`
+});
+scene.add(new THREE.Mesh(new THREE.SphereGeometry(300, 32, 16), skyMat));
+
+/* ---------------------------------------------------------------------------
+ * Canvas textures. Everything is generated at runtime; all of them tile.
+ * ------------------------------------------------------------------------- */
+function makeCanvas(w, h) { const cv = document.createElement('canvas'); cv.width = w; cv.height = h; return cv; }
+function tex(cv, srgb) {
+  const t = new THREE.CanvasTexture(cv);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.anisotropy = 8;
+  if (srgb) t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+// Tangent-space normal map from a wrapped height field (flipY canvas convention: +G = up in the image).
+function normalFromHeight(H, S, k) {
+  const cv = makeCanvas(S, S), g = cv.getContext('2d'), img = g.createImageData(S, S), d = img.data;
+  for (let y = 0; y < S; y++) {
+    const ym = (y - 1 + S) % S, yp = (y + 1) % S;
+    for (let x = 0; x < S; x++) {
+      const xm = (x - 1 + S) % S, xp = (x + 1) % S;
+      const dx = H[y * S + xp] - H[y * S + xm], dy = H[yp * S + x] - H[ym * S + x];
+      const nx = -dx * k, ny = dy * k, nz = 1;
+      const l = Math.hypot(nx, ny, nz);
+      const i = (y * S + x) * 4;
+      d[i] = (nx / l * 0.5 + 0.5) * 255; d[i + 1] = (ny / l * 0.5 + 0.5) * 255; d[i + 2] = (nz / l * 0.5 + 0.5) * 255; d[i + 3] = 255;
+    }
+  }
+  g.putImageData(img, 0, 0);
+  return cv;
+}
+
+// Exterior render (Rieselputz): fine aggregate grain, large-scale mottling, faint trowel sweeps.
+// One tile = 2 m x 2 m at 1024 px, so a pixel is ~2 mm: one grain of aggregate.
+function plasterMaps(seed, rgb, grainAmt, mottleAmt, bumpK) {
+  const S = 1024, M = 128, r = mulberry32(seed);
+  const mot = tileNoise(M, 5, 4, seed);
+  // Trowel sweeps: wide, very faint arcs, drawn 9x so they wrap.
+  const st = makeCanvas(S, S), sg = st.getContext('2d');
+  sg.fillStyle = '#808080'; sg.fillRect(0, 0, S, S);
+  sg.lineCap = 'round';
+  for (let i = 0; i < 36; i++) {
+    const cx = r() * S, cy = r() * S, rad = 120 + r() * 260, a0 = r() * 6.28, a1 = a0 + 0.8 + r() * 1.6;
+    sg.lineWidth = 30 + r() * 70;
+    sg.strokeStyle = r() < 0.5 ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)';
+    for (let ox = -1; ox <= 1; ox++) for (let oy = -1; oy <= 1; oy++) {
+      sg.beginPath(); sg.arc(cx + ox * S, cy + oy * S, rad, a0, a1); sg.stroke();
+    }
+  }
+  const stData = sg.getImageData(0, 0, S, S).data;
+  const half = S / 2, coarse = new Float32Array(half * half);
+  for (let i = 0; i < coarse.length; i++) coarse[i] = r() - 0.5;
+  const cv = makeCanvas(S, S), g = cv.getContext('2d'), img = g.createImageData(S, S), d = img.data;
+  const H = new Float32Array(S * S);
+  for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) {
+    const i = y * S + x;
+    const m = sampleTile(mot, M, x / S, y / S) - 0.5;
+    const strokes = stData[i * 4] / 128 - 1;
+    const fine = r() - 0.5, co = coarse[(y >> 1) * half + (x >> 1)];
+    let gr = (0.55 * fine + 0.45 * co) * grainAmt;
+    const sp = r();
+    if (sp < 0.025) gr -= 0.10; else if (sp < 0.045) gr += 0.08;   // sparse darker / lighter aggregate
+    const tone = 1 + m * mottleAmt * 2 + strokes * 0.6 + gr;
+    d[i * 4] = clamp(rgb[0] * tone, 0, 255); d[i * 4 + 1] = clamp(rgb[1] * tone, 0, 255); d[i * 4 + 2] = clamp(rgb[2] * tone, 0, 255); d[i * 4 + 3] = 255;
+    H[i] = 0.5 + gr * 2.2 * bumpK + m * 0.15;
+  }
+  g.putImageData(img, 0, 0);
+  return { map: tex(cv, true), normalMap: tex(normalFromHeight(H, S, 2.0)) };
+}
+
+// Formed concrete: 0.5 x 2.0 m form-board panels with tone steps, thin joints, faint staining, bug holes.
+// One tile = 4 m x 4 m.
+function concreteMaps(seed) {
+  const S = 1024, M = 128, r = mulberry32(seed);
+  const mot = tileNoise(M, 4, 4, seed), stain = tileNoise(M, 3, 3, seed + 7);
+  const PW = S / 8, PH = S / 2;
+  const panel = [];
+  for (let i = 0; i < 16; i++) panel.push((r() - 0.5) * 0.10);
+  const cv = makeCanvas(S, S), g = cv.getContext('2d'), img = g.createImageData(S, S), d = img.data;
+  const H = new Float32Array(S * S);
+  const base = [158, 156, 150], stainC = [120, 108, 90];
+  for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) {
+    const i = y * S + x;
+    const m = sampleTile(mot, M, x / S, y / S) - 0.5;
+    const st = Math.max(0, sampleTile(stain, M, x / S, y / S) - 0.55) * 2.2;
+    const pi = Math.floor(y / PH) * 8 + Math.floor(x / PW);
+    const joint = (x % PW < 2 || y % PH < 2) ? 1 : 0;
+    const grain = (r() - 0.5) * 0.06;
+    const tone = 1 + panel[pi] + m * 0.22 + grain - joint * 0.16;
+    for (let k = 0; k < 3; k++) d[i * 4 + k] = clamp(lerp(base[k], stainC[k], st * 0.6) * tone, 0, 255);
+    d[i * 4 + 3] = 255;
+    H[i] = 0.5 + grain * 0.5 + m * 0.06 - joint * 0.25;
+  }
+  g.putImageData(img, 0, 0);
+  g.fillStyle = 'rgba(40,40,38,0.55)';
+  for (let i = 0; i < 220; i++) { g.beginPath(); g.arc(r() * S, r() * S, 1 + r() * 2.5, 0, 6.2832); g.fill(); }
+  return { map: tex(cv, true), normalMap: tex(normalFromHeight(H, S, 2.5)) };
+}
+
+// Concrete pavers 200 x 100 mm in stretcher bond. One tile = 1 m.
+function paverMaps(seed) {
+  const S = 512, r = mulberry32(seed), PW = S / 5, PH = S / 10;
+  const cv = makeCanvas(S, S), g = cv.getContext('2d');
+  g.fillStyle = '#6a665e'; g.fillRect(0, 0, S, S);
+  for (let j = 0; j < 10; j++) {
+    const off = (j % 2) * PW / 2;
+    for (let i = -1; i < 5; i++) {
+      const t = 0.86 + r() * 0.24;
+      g.fillStyle = 'rgb(' + ((178 * t) | 0) + ',' + ((170 * t) | 0) + ',' + ((156 * t) | 0) + ')';
+      g.fillRect(i * PW + off + 2, j * PH + 2, PW - 4, PH - 4);
+    }
+  }
+  const img = g.getImageData(0, 0, S, S), d = img.data, H = new Float32Array(S * S);
+  for (let i = 0; i < S * S; i++) {
+    const n = (r() - 0.5) * 14;
+    d[i * 4] += n; d[i * 4 + 1] += n; d[i * 4 + 2] += n;
+    H[i] = (d[i * 4] + d[i * 4 + 1] + d[i * 4 + 2]) / 765;
+  }
+  g.putImageData(img, 0, 0);
+  return { map: tex(cv, true), normalMap: tex(normalFromHeight(H, S, 1.2)) };
+}
+
+// Lawn detail: near-neutral luminance with blade strokes; hue comes from vertex colours. One tile = 1.5 m.
+function grassTexture(seed) {
+  const S = 512, r = mulberry32(seed);
+  const cv = makeCanvas(S, S), g = cv.getContext('2d');
+  g.fillStyle = 'rgb(196,203,186)'; g.fillRect(0, 0, S, S);
+  g.lineCap = 'round';
+  for (let i = 0; i < 4200; i++) {
+    const x = r() * S, y = r() * S, l = 5 + r() * 10, a = -Math.PI / 2 + (r() - 0.5) * 1.2, lum = 140 + r() * 115;
+    g.strokeStyle = 'rgb(' + ((lum * 0.93) | 0) + ',' + (lum | 0) + ',' + ((lum * 0.80) | 0) + ')';
+    g.lineWidth = 1 + r() * 1.5;
+    for (let ox = -1; ox <= 0; ox++) for (let oy = -1; oy <= 0; oy++) {
+      g.beginPath(); g.moveTo(x + ox * S, y + oy * S); g.lineTo(x + ox * S + Math.cos(a) * l, y + oy * S + Math.sin(a) * l); g.stroke();
+    }
+  }
+  g.fillStyle = 'rgba(90,80,60,0.45)';
+  for (let i = 0; i < 300; i++) { g.beginPath(); g.arc(r() * S, r() * S, 1 + r() * 1.5, 0, 6.2832); g.fill(); }
+  return tex(cv, true);
+}
+
+// Palm trunk: leaf-scar rings. One tile = 1 m of height.
+function trunkTexture(seed) {
+  const S = 64, Hh = 256, r = mulberry32(seed);
+  const cv = makeCanvas(S, Hh), g = cv.getContext('2d');
+  g.fillStyle = '#8a6a42'; g.fillRect(0, 0, S, Hh);
+  for (let y = 0; y < Hh; y += 22) {
+    g.fillStyle = 'rgba(70,50,30,0.55)'; g.fillRect(0, y, S, 7);
+    g.fillStyle = 'rgba(200,170,120,0.25)'; g.fillRect(0, y + 7, S, 3);
+  }
+  g.fillStyle = 'rgba(0,0,0,0.18)';
+  for (let i = 0; i < 400; i++) g.fillRect(r() * S, r() * Hh, 1 + r() * 2, 1 + r() * 3);
+  return tex(cv, true);
+}
+
+// Pinnate frond (palm / fern): midrib with angled leaflets, transparent elsewhere. Used with alphaTest.
+function pinnateTexture(seed, W, Hh, pairs, leafLen, leafW, angle, col) {
+  const r = mulberry32(seed);
+  const cv = makeCanvas(W, Hh), g = cv.getContext('2d');
+  g.clearRect(0, 0, W, Hh);
+  g.strokeStyle = 'rgb(' + col[0] + ',' + col[1] + ',' + col[2] + ')'; g.lineWidth = 3;
+  g.beginPath(); g.moveTo(0, Hh / 2); g.lineTo(W, Hh / 2); g.stroke();
+  for (let i = 0; i < pairs; i++) {
+    const u = (i + 0.5) / pairs, x = u * W;
+    const taper = 1 - Math.pow(u, 2.2) * 0.75;
+    for (const side of [-1, 1]) {
+      const t = 0.85 + r() * 0.3;
+      g.fillStyle = 'rgb(' + ((col[0] * t) | 0) + ',' + ((col[1] * t) | 0) + ',' + ((col[2] * t) | 0) + ')';
+      g.save();
+      g.translate(x, Hh / 2);
+      g.rotate(side * angle);
+      g.beginPath(); g.ellipse(leafLen * taper * 0.5, 0, leafLen * taper * 0.5, leafW * taper, 0, 0, 6.2832); g.fill();
+      g.restore();
+    }
+  }
+  return tex(cv, true);
+}
+
+// Banana leaf: midrib, parallel veins, tip browning and a few wind tears (alpha 0).
+function bananaTexture(seed) {
+  const W = 512, Hh = 256, r = mulberry32(seed);
+  const cv = makeCanvas(W, Hh), g = cv.getContext('2d');
+  const grad = g.createLinearGradient(0, 0, 0, Hh);
+  grad.addColorStop(0, '#3d8a30'); grad.addColorStop(0.5, '#5aa63c'); grad.addColorStop(1, '#3d8a30');
+  g.fillStyle = grad; g.fillRect(0, 0, W, Hh);
+  g.strokeStyle = 'rgba(20,60,15,0.18)'; g.lineWidth = 1;
+  for (let x = -40; x < W; x += 7) {
+    g.beginPath(); g.moveTo(x, Hh / 2); g.lineTo(x + 40, 0); g.stroke();
+    g.beginPath(); g.moveTo(x, Hh / 2); g.lineTo(x + 40, Hh); g.stroke();
+  }
+  const rib = g.createLinearGradient(0, 0, W, 0);
+  rib.addColorStop(0, '#d2dd62'); rib.addColorStop(1, '#9fbf48');
+  g.fillStyle = rib;
+  g.beginPath(); g.moveTo(0, Hh / 2 - 10); g.lineTo(W, Hh / 2 - 2); g.lineTo(W, Hh / 2 + 2); g.lineTo(0, Hh / 2 + 10); g.closePath(); g.fill();
+  const tip = g.createLinearGradient(W * 0.8, 0, W, 0);
+  tip.addColorStop(0, 'rgba(140,110,40,0)'); tip.addColorStop(1, 'rgba(140,110,40,0.55)');
+  g.fillStyle = tip; g.fillRect(W * 0.8, 0, W * 0.2, Hh);
+  g.globalCompositeOperation = 'destination-out';
+  g.lineWidth = 3; g.strokeStyle = '#000';
+  for (let i = 0; i < 9; i++) {
+    const x = 90 + r() * 400, side = r() < 0.5 ? 0 : Hh, len = 30 + r() * 90;
+    const dir = side === 0 ? 1 : -1;
+    g.beginPath(); g.moveTo(x, side); g.lineTo(x - 0.36 * len, side + dir * len); g.stroke();
+  }
+  g.globalCompositeOperation = 'source-over';
+  return tex(cv, true);
+}
+
+// Monstera leaf colour in shape coordinates: x in [-0.5, 0.5], y in [-0.15, 1.05].
+function monsteraTexture() {
+  const S = 256, cv = makeCanvas(S, S), g = cv.getContext('2d');
+  const px = x => (x + 0.5) * S, py = y => (1 - (y + 0.15) / 1.2) * S;
+  const grad = g.createRadialGradient(px(0), py(0.4), 10, px(0), py(0.4), S * 0.6);
+  grad.addColorStop(0, '#3f8f34'); grad.addColorStop(1, '#22571f');
+  g.fillStyle = grad; g.fillRect(0, 0, S, S);
+  g.strokeStyle = 'rgba(190,220,120,0.35)'; g.lineWidth = 1.5;
+  for (let y = 0.05; y < 1.0; y += 0.07) {
+    for (const s of [-1, 1]) { g.beginPath(); g.moveTo(px(0), py(y)); g.lineTo(px(s * 0.5), py(y + 0.28)); g.stroke(); }
+  }
+  g.strokeStyle = 'rgba(200,225,130,0.7)'; g.lineWidth = 3;
+  g.beginPath(); g.moveTo(px(0), py(0.02)); g.lineTo(px(0), py(1.0)); g.stroke();
+  return tex(cv, true);
+}
+
+/* ---------------------------------------------------------------------------
+ * Materials
+ * ------------------------------------------------------------------------- */
+const renderMaps = plasterMaps(11, [232, 223, 203], 0.14, 0.10, 1.0);     // warm off-white / light sand render
+const plinthMaps = plasterMaps(12, [166, 160, 150], 0.18, 0.12, 1.4);     // coarser, greyer plinth band
+const concreteMapsA = concreteMaps(21);
+const paverMapsA = paverMaps(31);
+const grassTex = grassTexture(41);
+
+const matRender = new THREE.MeshStandardMaterial({ map: renderMaps.map, normalMap: renderMaps.normalMap, normalScale: new THREE.Vector2(0.55, 0.55), roughness: 0.92, metalness: 0 });
+const matPlinth = new THREE.MeshStandardMaterial({ map: plinthMaps.map, normalMap: plinthMaps.normalMap, normalScale: new THREE.Vector2(0.7, 0.7), roughness: 0.95, metalness: 0 });
+const matConcrete = new THREE.MeshStandardMaterial({ map: concreteMapsA.map, normalMap: concreteMapsA.normalMap, normalScale: new THREE.Vector2(0.35, 0.35), roughness: 0.78, metalness: 0 });
+const matFloor = new THREE.MeshStandardMaterial({ map: concreteMapsA.map, normalMap: concreteMapsA.normalMap, normalScale: new THREE.Vector2(0.2, 0.2), color: 0xbdbbb4, roughness: 0.85, metalness: 0 });
+const matPaver = new THREE.MeshStandardMaterial({ map: paverMapsA.map, normalMap: paverMapsA.normalMap, normalScale: new THREE.Vector2(0.5, 0.5), roughness: 0.9, metalness: 0 });
+const matGround = new THREE.MeshStandardMaterial({ map: grassTex, vertexColors: true, roughness: 0.95, metalness: 0 });
+const matOuterGround = new THREE.MeshStandardMaterial({ map: grassTex, color: 0x4d8a34, roughness: 0.95, metalness: 0 });
+const matDoor = new THREE.MeshStandardMaterial({ color: 0x3a3f44, roughness: 0.45, metalness: 0.35 });
+const matFrame = new THREE.MeshStandardMaterial({ color: 0xe9e9e4, roughness: 0.5, metalness: 0.2 });
+const matPipe = new THREE.MeshStandardMaterial({ color: 0x9aa1a3, roughness: 0.35, metalness: 0.6 });
+const matLamp = new THREE.MeshStandardMaterial({ color: 0xf2f2ee, roughness: 0.4, metalness: 0.1, emissive: 0xfff1cf, emissiveIntensity: 0.55 });
+const matHuman = new THREE.MeshStandardMaterial({ color: 0xe6e1d6, roughness: 0.6, metalness: 0 });
+
+/* ---------------------------------------------------------------------------
+ * Geometry helpers
+ * ------------------------------------------------------------------------- */
+// Planar UVs from world position, chosen per face by dominant normal axis. Geometry must already be
+// in world coordinates, so adjacent boxes share one continuous texture with no seams.
+function planarUV(geo, tile) {
+  const p = geo.attributes.position, n = geo.attributes.normal, uv = geo.attributes.uv;
+  for (let i = 0; i < p.count; i++) {
+    const ax = Math.abs(n.getX(i)), ay = Math.abs(n.getY(i)), az = Math.abs(n.getZ(i));
+    let u, v;
+    if (ax >= ay && ax >= az) { u = p.getZ(i); v = p.getY(i); }
+    else if (ay >= az) { u = p.getX(i); v = p.getZ(i); }
+    else { u = p.getX(i); v = p.getY(i); }
+    uv.setXY(i, u / tile, v / tile);
+  }
+  uv.needsUpdate = true;
+}
+function worldBox(x0, x1, y0, y1, z0, z1, mat, tile) {
+  const geo = new THREE.BoxGeometry(x1 - x0, y1 - y0, z1 - z0);
+  geo.translate((x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2);
+  planarUV(geo, tile);
+  const m = new THREE.Mesh(geo, mat);
+  m.castShadow = true; m.receiveShadow = true;
+  return m;
+}
+// Concatenate indexed geometries (position / normal / uv) that are already transformed.
+function mergeGeos(list) {
+  let vCount = 0, iCount = 0;
+  for (const g of list) { vCount += g.attributes.position.count; iCount += g.index.count; }
+  const pos = new Float32Array(vCount * 3), nor = new Float32Array(vCount * 3), uv = new Float32Array(vCount * 2);
+  const idx = vCount > 65535 ? new Uint32Array(iCount) : new Uint16Array(iCount);
+  let vo = 0, io = 0;
+  for (const g of list) {
+    pos.set(g.attributes.position.array, vo * 3);
+    nor.set(g.attributes.normal.array, vo * 3);
+    uv.set(g.attributes.uv.array, vo * 2);
+    const gi = g.index.array;
+    for (let k = 0; k < gi.length; k++) idx[io + k] = gi[k] + vo;
+    vo += g.attributes.position.count; io += gi.length;
+  }
+  const out = new THREE.BufferGeometry();
+  out.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  out.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
+  out.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+  out.setIndex(new THREE.BufferAttribute(idx, 1));
+  return out;
+}
+
+/* ---------------------------------------------------------------------------
+ * Ground: inner detailed plane (vertex-coloured lawn, mulch beds, gravel strip) + flat outer plane
+ * ------------------------------------------------------------------------- */
+function terrainHeight(x, z) {
+  const r = Math.hypot(x, z);
+  const env = smoothstep(9, 13, r) * (1 - smoothstep(15, 19, r));   // flat around the building, soft rolls beyond
+  return GROUND_Y + env * (fbm(x * 0.15 + 5, z * 0.15 + 9) - 0.5) * 1.6;
+}
+// Planting beds [x0, x1, z0, z1]: massed around the building edges, deepest at the back.
+const BEDS = [
+  [-8.5, 8.5, 2.8, 6.5],     // 0 back border
+  [-8.5, -4.8, -4.0, 2.8],   // 1 west of the carport
+  [5.0, 8.5, -3.0, 2.8],     // 2 east of the shed
+  [2.4, 8.5, -6.2, -2.6],    // 3 front-east, beside the door path
+  [-8.5, -4.4, -8.5, -3.0],  // 4 front-west, beside the driveway (kept low)
+];
+function rectDist(x, z, r) {
+  const dx = Math.max(r[0] - x, 0, x - r[1]), dz = Math.max(r[2] - z, 0, z - r[3]);
+  return Math.hypot(dx, dz);
+}
+function bedMask(x, z) {
+  let m = 0;
+  for (const b of BEDS) m = Math.max(m, 1 - smoothstep(0, 0.8, rectDist(x, z, b)));
+  return m;
+}
+const BUILDING_RECT = [X0, X2, Z0, Z1];
+function gravelMask(x, z) { return 1 - smoothstep(0.3, 0.5, rectDist(x, z, BUILDING_RECT)); }
+
+{
+  const SIZE = 40, SEG = 160;
+  const geo = new THREE.PlaneGeometry(SIZE, SIZE, SEG, SEG);
+  geo.rotateX(-Math.PI / 2);
+  const pos = geo.attributes.position, colors = new Float32Array(pos.count * 3);
+  const cGrassA = new THREE.Color(0x5f9a3c), cGrassB = new THREE.Color(0x3f7a2c), cGrassDry = new THREE.Color(0x8ea24a);
+  const cMulchA = new THREE.Color(0x5a4430), cMulchB = new THREE.Color(0x3d2c1e), cGravel = new THREE.Color(0xb9b5aa);
+  const col = new THREE.Color(), tmp = new THREE.Color();
+  for (let i = 0; i < pos.count; i++) {
+    const x = pos.getX(i), z = pos.getZ(i);
+    pos.setY(i, terrainHeight(x, z));
+    col.lerpColors(cGrassA, cGrassB, smoothstep(0.3, 0.7, fbm(x * 0.35 + 11, z * 0.35 + 3)));
+    col.lerp(cGrassDry, smoothstep(0.62, 0.8, fbm(x * 0.2 + 50, z * 0.2 + 70)) * 0.7);
+    tmp.lerpColors(cMulchA, cMulchB, fbm(x * 0.9, z * 0.9));
+    col.lerp(tmp, bedMask(x, z));
+    col.lerp(cGravel, gravelMask(x, z));
+    colors[i * 3] = col.r; colors[i * 3 + 1] = col.g; colors[i * 3 + 2] = col.b;
+  }
+  geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+  geo.computeVertexNormals();
+  planarUV(geo, 1.5);
+  const ground = new THREE.Mesh(geo, matGround);
+  ground.receiveShadow = true;
+  scene.add(ground);
+
+  const outerGeo = new THREE.PlaneGeometry(400, 400, 1, 1);
+  outerGeo.rotateX(-Math.PI / 2);
+  outerGeo.translate(0, GROUND_Y - 0.01, 0);
+  planarUV(outerGeo, 1.5);
+  const outer = new THREE.Mesh(outerGeo, matOuterGround);
+  outer.receiveShadow = true;
+  scene.add(outer);
+}
+
+/* ---------------------------------------------------------------------------
+ * The building
+ *
+ * Every separable component is its own object registered through addPart: each
+ * Ytong block, each lintel, each door part, the slabs, the fittings. Assembled
+ * they sit exactly where they are built; the exploded view slides each one along
+ * the offset stored with it, so the model comes apart into its real pieces.
+ * ------------------------------------------------------------------------- */
+const building = new THREE.Group();
+scene.add(building);
+
+// Exploded layout: components spread radially from the building's vertical axis and
+// lift in proportion to their height above the underside of the floor slab, so the
+// courses part in the order they were laid and nothing sinks into the garden.
+const EXPL_XZ = 0.70;            // radial spread per metre from the centre line
+const EXPL_Y  = 0.90;            // lift per metre above the floor slab's underside
+const EXPL_Y0 = -FLOOR_T;        // the pivot height: everything lifts away from here
+const WALL_OUT = 1.00;           // extra push on each wall along its own outward normal, so the
+                                 // four planes of blockwork separate instead of staying a box
+const parts = [];                // { obj, home, expl }
+
+// What the next addPart call is registering. Set by the construction code as it works
+// down the trade sequence; the build animation replays the parts in that order.
+let PART_KIND = 'block';   // floor | block | lintel | roof | door | fitting
+let PART_TAG = 0;          // which wall a block belongs to, for laying a course in order
+let PART_RUN = 0;          // its position along that wall
+
+// obj is already in world position. (cx, cy, cz) is the component's centre and sets
+// the direction it travels; extra is an additional push for parts that have to clear
+// the opening they sit in (door leaves, fittings) rather than just drift with the wall.
+function addPart(obj, cx, cy, cz, extra) {
+  const expl = new THREE.Vector3(cx * EXPL_XZ, (cy - EXPL_Y0) * EXPL_Y, cz * EXPL_XZ);
+  if (extra) expl.add(extra);
+  obj.matrixAutoUpdate = false; obj.updateMatrix();
+  for (const ch of obj.children) { ch.matrixAutoUpdate = false; ch.updateMatrix(); }
+  // Measured before the object joins the graph, so the box is its own world extent.
+  const box = new THREE.Box3().setFromObject(obj);
+  parts.push({
+    obj, home: obj.position.clone(), expl,
+    centre: new THREE.Vector3(cx, cy, cz),
+    kind: PART_KIND, tag: PART_TAG, run: PART_RUN,
+    y0: box.min.y, top: box.max.y,
+  });
+  building.add(obj);
+  return obj;
+}
+const OUT = (x, y, z) => new THREE.Vector3(x, y, z);
+// A wall's own outward normal: perpendicular to its run, away from the centre line.
+function wallOut(axis, b0, b1) {
+  const s = Math.sign((b0 + b1) / 2) || 1;
+  return axis === 'x' ? OUT(0, 0, s * WALL_OUT) : OUT(s * WALL_OUT, 0, 0);
+}
+
+// One rendered Ytong element. Where it crosses the plinth line it is split in two, so
+// the darker base band reads the same as it did when the walls were single boxes.
+function ytongPiece(x0, x1, y0, y1, z0, z1) {
+  if (y0 < PLINTH_H - 1e-4 && y1 > PLINTH_H + 1e-4) {
+    const g = new THREE.Group();
+    g.add(worldBox(x0, x1, y0, PLINTH_H, z0, z1, matPlinth, 2));
+    g.add(worldBox(x0, x1, PLINTH_H, y1, z0, z1, matRender, 2));
+    return g;
+  }
+  return worldBox(x0, x1, y0, y1, z0, z1, y1 <= PLINTH_H + 1e-4 ? matPlinth : matRender, 2);
+}
+function ytongBlock(x0, x1, y0, y1, z0, z1, extra) {
+  return addPart(ytongPiece(x0, x1, y0, y1, z0, z1),
+                 (x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2, extra);
+}
+
+// A wall laid as real coursed blockwork: 12 courses of 250 mm, half-block running bond,
+// pieces sawn wherever a course runs into something else. `axis` is the direction of the
+// run a0..a1; b0..b1 is the thickness on the other axis. Each hole is a rectangle
+// { a0, a1, y0, y1 } in (run, height) that the blockwork gives way to — an opening, or
+// the lintel over it.
+function blockWall(axis, a0, a1, b0, b1, holes, tag) {
+  const courses = Math.round(WALL_H / BLK_H);
+  const out = wallOut(axis, b0, b1);
+  PART_TAG = tag;
+  for (let c = 0; c < courses; c++) {
+    const cy0 = c * BLK_H, cy1 = cy0 + BLK_H;
+    // Joints the mason cannot choose: the ends of the run and every hole edge.
+    const fixed = [a0, a1];
+    for (const h of holes) {
+      for (const e of [h.a0, h.a1]) if (e > a0 + 1e-4 && e < a1 - 1e-4) fixed.push(e);
+    }
+    // Joints from the bond grid, offset half a block on every other course. One that would
+    // leave a sliver against a fixed joint is nudged clear of it instead.
+    const cuts = fixed.slice();
+    for (let k = 0; ; k++) {
+      let j = a0 - (c % 2 ? BLK_L / 2 : 0) + k * BLK_L;
+      if (j >= a1 - 1e-4) break;
+      if (j <= a0 + 1e-4) continue;
+      const near = fixed.reduce((m, f) => Math.abs(f - j) < Math.abs(m - j) ? f : m, fixed[0]);
+      if (Math.abs(near - j) < MIN_PIECE) j = near + Math.sign(j - near || 1) * MIN_PIECE;
+      if (fixed.every(f => Math.abs(f - j) > MIN_PIECE - 1e-9)) cuts.push(j);
+    }
+    cuts.sort((p, q) => p - q);
+    // Nothing longer than a whole block survives: split what is left over in two.
+    for (let i = 0; i < cuts.length - 1; i++) {
+      if (cuts[i + 1] - cuts[i] > BLK_L + 1e-6) cuts.splice(i + 1, 0, (cuts[i] + cuts[i + 1]) / 2);
+    }
+    for (let i = 0; i < cuts.length - 1; i++) {
+      const p = cuts[i], q = cuts[i + 1];
+      if (q - p < 5e-3) continue;
+      // Subtract whatever this piece runs into vertically; what is left is what gets laid.
+      let segs = [[cy0, cy1]];
+      const mid = (p + q) / 2;
+      for (const h of holes) {
+        if (mid < h.a0 || mid > h.a1) continue;
+        const next = [];
+        for (const s of segs) {
+          if (h.y1 <= s[0] + 1e-6 || h.y0 >= s[1] - 1e-6) { next.push(s); continue; }
+          if (h.y0 > s[0] + 1e-6) next.push([s[0], h.y0]);
+          if (h.y1 < s[1] - 1e-6) next.push([h.y1, s[1]]);
+        }
+        segs = next;
+      }
+      for (const s of segs) {
+        if (s[1] - s[0] < 5e-3) continue;
+        PART_RUN = (p + q) / 2;
+        if (axis === 'x') ytongBlock(p, q, s[0], s[1], b0, b1, out);
+        else ytongBlock(b0, b1, s[0], s[1], p, q, out);
+      }
+    }
+  }
+}
+// Front (south) and back (north) walls: one centred door each, with its lintel.
+// Shared (west) and end (east) walls: solid, laid between them.
+PART_KIND = 'block';
+const WALL_HOLES = [DOOR_OP, LINTEL_OP];
+blockWall('x', X1, X2, Z0, Z0 + WALL_T, WALL_HOLES, 0);
+blockWall('x', X1, X2, Z1 - WALL_T, Z1, WALL_HOLES, 1);
+blockWall('z', Z0 + WALL_T, Z1 - WALL_T, X1, X1 + WALL_T, [], 2);
+blockWall('z', Z0 + WALL_T, Z1 - WALL_T, X2 - WALL_T, X2, [], 3);
+PART_KIND = 'lintel';
+for (const zw of [[Z0, Z0 + WALL_T], [Z1 - WALL_T, Z1]]) {
+  PART_TAG = zw[0] === Z0 ? 0 : 1; PART_RUN = SHED_CX;
+  ytongBlock(LINTEL_OP.a0, LINTEL_OP.a1, LINTEL_OP.y0, LINTEL_OP.y1, zw[0], zw[1], wallOut('x', zw[0], zw[1]));
+}
+// Two Ytong columns on the carport's outer (west) corners, coursed like the walls;
+// the shared wall carries the inner side.
+PART_KIND = 'block'; PART_TAG = 4;
+for (const zc of COL_Z)
+  for (let c = 0; c < Math.round(WALL_H / BLK_H); c++) {
+    PART_RUN = zc;
+    ytongBlock(X0, X0 + COL, c * BLK_H, (c + 1) * BLK_H, zc, zc + COL);
+  }
+
+// Slab-on-grade under the shed and the carport (top = finished floor, y = 0).
+PART_KIND = 'floor'; PART_TAG = 0; PART_RUN = 0;
+addPart(worldBox(X0, X1, -FLOOR_T, 0, Z0, Z1, matFloor, 2), (X0 + X1) / 2, -FLOOR_T / 2, 0);
+PART_RUN = 1;
+addPart(worldBox(X1, X2, -FLOOR_T, 0, Z0, Z1, matFloor, 2), (X1 + X2) / 2, -FLOOR_T / 2, 0);
+
+// The roof: one monolithic slab over the whole footprint, with a drainage fall and a chamfered drip edge
+// under the overhang. Built as three rings of corners: top, outer edge at chamfer height, chamfer foot.
+function slabGeometry() {
+  const x0 = X0 - OVERHANG, x1 = X2 + OVERHANG, z0 = Z0 - OVERHANG, z1 = Z1 + OVERHANG;
+  const yB = SLAB_Y, c = CHAMFER;
+  const topY = z => SLAB_TOP + SLAB_FALL * (z1 - z) / (z1 - z0);   // front edge high, back edge low
+  const R0 = [[x0, topY(z0), z0], [x1, topY(z0), z0], [x1, topY(z1), z1], [x0, topY(z1), z1]];
+  const R1 = [[x0, yB + c, z0], [x1, yB + c, z0], [x1, yB + c, z1], [x0, yB + c, z1]];
+  const R2 = [[x0 + c, yB, z0 + c], [x1 - c, yB, z0 + c], [x1 - c, yB, z1 - c], [x0 + c, yB, z1 - c]];
+  const pos = [];
+  const A = new THREE.Vector3(), B = new THREE.Vector3(), C = new THREE.Vector3(), N = new THREE.Vector3(), Hn = new THREE.Vector3();
+  // Quad a-b-c-d, wound so its normal agrees with the hint.
+  function quad(a, b, c2, d, hx, hy, hz) {
+    A.fromArray(a); B.fromArray(b); C.fromArray(c2);
+    N.subVectors(B, A).cross(C.clone().sub(A)); Hn.set(hx, hy, hz);
+    const flip = N.dot(Hn) < 0;
+    const tri = (p, q, s) => { if (flip) pos.push(...p, ...s, ...q); else pos.push(...p, ...q, ...s); };
+    tri(a, b, c2); tri(a, c2, d);
+  }
+  quad(R0[0], R0[1], R0[2], R0[3], 0, 1, 0);
+  quad(R2[0], R2[1], R2[2], R2[3], 0, -1, 0);
+  for (let i = 0; i < 4; i++) {
+    const j = (i + 1) % 4;
+    const mx = (R1[i][0] + R1[j][0]) / 2, mz = (R1[i][2] + R1[j][2]) / 2;   // edge midpoint -> outward hint
+    quad(R0[i], R0[j], R1[j], R1[i], mx, 0, mz);
+    quad(R1[i], R1[j], R2[j], R2[i], mx, -0.5, mz);
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(pos), 3));
+  geo.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(pos.length / 3 * 2), 2));
+  geo.computeVertexNormals();
+  planarUV(geo, 4);
+  return geo;
+}
+const slab = new THREE.Mesh(slabGeometry(), matConcrete);
+slab.castShadow = true; slab.receiveShadow = true;
+// Cast in one pour, so it stays one piece; the extra lift clears the top course of blocks.
+PART_KIND = 'roof';
+addPart(slab, 0, SLAB_Y + SLAB_T / 2, 0, OUT(0, 0.5, 0));
+
+// Doors: steel frame + leaf set 70 mm into the reveal, lever handle, threshold step outside.
+// s = +1 for the front wall (outer face at Z0, wall runs toward +z); -1 for the back wall at Z1.
+// Exploded, the parts step out through the reveal: frame first, then the leaf, then its handle.
+function makeDoor(zOuter, s) {
+  const fw = 0.05;
+  // Depths are measured inward from the outer face, so they mirror for the back wall.
+  const span = (a, b) => [Math.min(zOuter + a * s, zOuter + b * s), Math.max(zOuter + a * s, zOuter + b * s)];
+  const out = d => OUT(0, 0, -s * (WALL_OUT + d));   // clear of the wall's own push, then the reveal
+  PART_TAG = s > 0 ? 0 : 1; PART_RUN = 0;
+  const nextPart = () => { PART_RUN += 1; };   // frame, leaf, furniture, step — in that order
+  const [f0, f1] = span(0.03, 0.13), fz = (f0 + f1) / 2;
+  addPart(worldBox(DOOR_X0, DOOR_X0 + fw, 0, DOOR_H, f0, f1, matFrame, 1), DOOR_X0 + fw / 2, DOOR_H / 2, fz, out(0.8)); nextPart();
+  addPart(worldBox(DOOR_X1 - fw, DOOR_X1, 0, DOOR_H, f0, f1, matFrame, 1), DOOR_X1 - fw / 2, DOOR_H / 2, fz, out(0.8)); nextPart();
+  addPart(worldBox(DOOR_X0, DOOR_X1, DOOR_H - fw, DOOR_H, f0, f1, matFrame, 1), SHED_CX, DOOR_H - fw / 2, fz, out(0.8)); nextPart();
+  const [l0, l1] = span(0.07, 0.11);
+  addPart(worldBox(DOOR_X0 + fw, DOOR_X1 - fw, 0.02, DOOR_H - fw, l0, l1, matDoor, 1), SHED_CX, DOOR_H / 2, (l0 + l1) / 2, out(1.7)); nextPart();
+  // Handle on the jamb away from the hinge; mirrored so both doors read correctly from outside.
+  const hx = s > 0 ? DOOR_X1 - 0.16 : DOOR_X0 + 0.16, hy = 1.05;
+  const rose = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.02, 16), matPipe);
+  rose.rotation.x = Math.PI / 2; rose.position.set(hx, hy, zOuter + 0.06 * s);
+  addPart(rose, hx, hy, zOuter + 0.06 * s, out(2.3)); nextPart();
+  const lever = new THREE.Mesh(new THREE.BoxGeometry(0.13, 0.02, 0.02), matPipe);
+  lever.position.set(hx - 0.05 * s, hy, zOuter + 0.04 * s); lever.castShadow = true;
+  addPart(lever, hx - 0.05 * s, hy, zOuter + 0.04 * s, out(2.3)); nextPart();
+  const [t0, t1] = span(-0.3, 0);
+  addPart(worldBox(DOOR_X0 - 0.1, DOOR_X1 + 0.1, PAVE_Y, -0.02, t0, t1, matFloor, 2),
+          SHED_CX, (PAVE_Y - 0.02) / 2, (t0 + t1) / 2, out(0.3));   // threshold step
+}
+PART_KIND = 'door';
+makeDoor(Z0, 1);
+makeDoor(Z1, -1);
+PART_KIND = 'fitting';
+
+// Downpipe off the back edge of the slab, bracketed to the back wall, with a gully on the slab top.
+{
+  const px = X2 - 0.4, pz = Z1 + 0.10, out = OUT(0, 0, WALL_OUT + 0.9);
+  PART_TAG = 0; PART_RUN = 2;
+  const pipe = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, SLAB_TOP + 0.06 - GROUND_Y, 14), matPipe);
+  pipe.position.set(px, (SLAB_TOP + 0.06 + GROUND_Y) / 2, pz); pipe.castShadow = true;
+  addPart(pipe, px, (SLAB_TOP + 0.06 + GROUND_Y) / 2, pz, out);
+  const gully = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.10, 0.22), matPipe);
+  gully.position.set(px, SLAB_TOP + 0.05, pz); gully.castShadow = true;
+  PART_RUN = 3;
+  addPart(gully, px, SLAB_TOP + 0.05, pz, OUT(0, 1.1, WALL_OUT + 0.9));
+  for (const by of [0.9, 2.4]) {
+    const br = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.04, 0.14), matPipe);
+    br.position.set(px, by, Z1 + 0.06);
+    PART_RUN = by < 2 ? 0 : 1;
+    addPart(br, px, by, Z1 + 0.06, OUT(0, 0, WALL_OUT + 0.5));
+  }
+  const shoe = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 0.3, 14), matPipe);
+  shoe.rotation.x = Math.PI / 2; shoe.position.set(px, GROUND_Y + 0.07, pz + 0.16);
+  PART_RUN = 4;
+  addPart(shoe, px, GROUND_Y + 0.07, pz + 0.16, OUT(0, 0, WALL_OUT + 1.3));
+}
+
+// Light fittings: a bulkhead under the carport slab and a wall lamp beside the door.
+{
+  const cx = (X0 + X1) / 2, cy = SLAB_Y - 0.03;
+  const cl = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.14, 0.06, 20), matLamp);
+  cl.position.set(cx, cy, 0);
+  PART_RUN = 5;
+  addPart(cl, cx, cy, 0, OUT(0, -0.5, 0));
+  const wx = DOOR_X1 + 0.32, wy = 2.35, wz = Z0 - 0.04;
+  const wl = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.20, 0.08), matLamp);
+  wl.position.set(wx, wy, wz); wl.castShadow = true;
+  PART_RUN = 6;
+  addPart(wl, wx, wy, wz, OUT(0, 0, -(WALL_OUT + 0.9)));
+}
+
+// Paving: driveway into the carport, path from the door joining it. Site work, not
+// building fabric — it stays put when the rest comes apart.
+{
+  const pave = (x0, x1, z0, z1) => building.add(worldBox(x0, x1, PAVE_Y - 0.1, PAVE_Y, z0, z1, matPaver, 1));
+  pave(X0 + 0.3, X1 - 0.3, DRIVE_Z, Z0);                        // driveway
+  pave(DOOR_X0 - 0.1, DOOR_X1 + 0.1, PATH_Z, Z0 - 0.3);         // door path (stops at the threshold step)
+  pave(X1 - 0.3, DOOR_X0 - 0.1, PATH_Z, PATH_Z + 1.2);          // link to the driveway
+  pave(DOOR_X0 - 0.35, DOOR_X1 + 0.35, Z1 + 0.3, Z1 + 1.4);     // landing outside the back door
+}
+
+/* ---------------------------------------------------------------------------
+ * Scale figure: 1.80 m abstract mannequin
+ * ------------------------------------------------------------------------- */
+const FIG = { x: -2.55, z: -3.3, yaw: -2.4 };
+FIG.y = terrainHeight(FIG.x, FIG.z);
+const figure = new THREE.Group();
+const figUpper = new THREE.Group();   // everything above the hips, so the figure can stoop
+const figArms = [];
+{
+  const g = figure;
+  g.position.set(FIG.x, FIG.y, FIG.z); g.rotation.y = FIG.yaw;
+  const add = (geo, px, py, pz, rz) => {
+    const m = new THREE.Mesh(geo, matHuman); m.position.set(px, py, pz);
+    if (rz) m.rotation.z = rz;
+    m.castShadow = true; g.add(m);
+  };
+  // Trunk, neck, head and arms hang off a hip pivot: rotating it stoops the whole
+  // upper body forward, which is how anyone lays a block at ankle height.
+  figUpper.position.y = HIP_Y;
+  g.add(figUpper);
+  const addU = (geo, px, py, pz) => {
+    const m = new THREE.Mesh(geo, matHuman); m.position.set(px, py - HIP_Y, pz);
+    m.castShadow = true; figUpper.add(m); return m;
+  };
+  const legGeo = new THREE.CapsuleGeometry(0.075, 0.70, 4, 10);
+  add(legGeo, -0.10, 0.44, 0); add(legGeo, 0.10, 0.44, 0);
+  add(new THREE.BoxGeometry(0.34, 0.18, 0.20), 0, 0.92, 0);
+  addU(new THREE.CapsuleGeometry(0.16, 0.44, 4, 12), 0, 1.30, 0);
+  addU(new THREE.CylinderGeometry(0.05, 0.06, 0.10, 10), 0, 1.60, 0);
+  addU(new THREE.SphereGeometry(0.115, 16, 12), 0, HUMAN_H - 0.115, 0);
+  // Arms hang from shoulder pivots rather than sitting at a fixed angle, so the build
+  // sequence can aim them: point the pivot's local down axis at the hand's target.
+  const armGeo = new THREE.CapsuleGeometry(0.05, 0.56, 4, 8);
+  for (const sx of [-0.25, 0.25]) {
+    const pivot = new THREE.Group();
+    pivot.position.set(sx, SHOULDER_Y - HIP_Y, 0);
+    pivot.rotation.z = sx < 0 ? -0.12 : 0.12;          // arms splay very slightly outward at rest
+    const arm = new THREE.Mesh(armGeo, matHuman);
+    arm.position.y = -ARM_LEN / 2; arm.castShadow = true;   // hand end is ARM_LEN below the shoulder
+    pivot.add(arm); figUpper.add(pivot);
+    pivot.shoulder = pivot.position.clone();
+    pivot.rest = pivot.quaternion.clone();
+    figArms.push(pivot);
+  }
+  const footGeo = new THREE.BoxGeometry(0.10, 0.06, 0.26);
+  add(footGeo, -0.10, 0.03, 0.04); add(footGeo, 0.10, 0.03, 0.04);
+  scene.add(g);
+}
+
+/* ---------------------------------------------------------------------------
+ * Site kit for the build sequence: a trestle the mason stands on once the
+ * courses go above shoulder height, and a tower crane for the roof slab.
+ * ------------------------------------------------------------------------- */
+const matSteel = new THREE.MeshStandardMaterial({ color: 0xd8b23a, roughness: 0.55, metalness: 0.35 });
+const matTimber = new THREE.MeshStandardMaterial({ color: 0xb0895a, roughness: 0.85, metalness: 0 });
+
+// Trestle: a plank platform on four legs. Its height steps with the course being laid.
+const trestle = new THREE.Group();
+trestle.visible = false;
+{
+  const deck = new THREE.Mesh(new THREE.BoxGeometry(1.30, 0.06, 0.70), matTimber);
+  deck.position.y = -0.03; deck.castShadow = true; deck.receiveShadow = true;
+  trestle.add(deck);
+  const legGeo = new THREE.BoxGeometry(0.07, 1, 0.07);
+  for (const sx of [-0.58, 0.58]) for (const sz of [-0.29, 0.29]) {
+    const leg = new THREE.Mesh(legGeo, matTimber);
+    leg.position.set(sx, -0.5, sz); leg.name = 'leg'; leg.castShadow = true;
+    trestle.add(leg);
+  }
+}
+scene.add(trestle);
+
+// Tower crane standing on the driveway, jib reaching over the building.
+const CRANE = { x: -2.0, z: -6.2, h: 8.0, jib: 7.4, back: 2.2 };
+CRANE.reach = Math.hypot(-CRANE.x, -CRANE.z);          // mast to the slab's centre
+CRANE.yaw = Math.atan2(CRANE.z, -CRANE.x);             // jib built along +x, swung to the load
+const crane = new THREE.Group();
+crane.visible = false;
+crane.position.set(CRANE.x, terrainHeight(CRANE.x, CRANE.z), CRANE.z);
+const craneJib = new THREE.Group();
+let craneHook, craneCable;
+{
+  const bar = (w, h, d, x, y, z, mat) => {
+    const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat || matSteel);
+    m.position.set(x, y, z); m.castShadow = true;
+    return m;
+  };
+  // Base and a four-post lattice mast with ties every metre.
+  crane.add(bar(1.6, 0.16, 1.6, 0, 0.08, 0, matFloor));
+  const a = 0.30;
+  for (const sx of [-a, a]) for (const sz of [-a, a]) crane.add(bar(0.07, CRANE.h, 0.07, sx, CRANE.h / 2, sz));
+  for (let y = 1; y < CRANE.h; y += 1.0) {
+    crane.add(bar(2 * a, 0.05, 0.05, 0, y, -a)); crane.add(bar(2 * a, 0.05, 0.05, 0, y, a));
+    crane.add(bar(0.05, 0.05, 2 * a, -a, y, 0)); crane.add(bar(0.05, 0.05, 2 * a, a, y, 0));
+  }
+  // Jib: bottom chord out over the load, short counter-jib with a counterweight, and a
+  // top chord tied back over a small A-frame — enough truss to read as a tower crane.
+  craneJib.position.y = CRANE.h;
+  craneJib.rotation.y = CRANE.yaw;
+  craneJib.add(bar(CRANE.jib + CRANE.back, 0.12, 0.16, (CRANE.jib - CRANE.back) / 2, 0, 0));
+  craneJib.add(bar(0.10, 1.10, 0.10, 0, 0.55, 0));
+  for (let i = 1; i <= 6; i++) {
+    const x = i * CRANE.jib / 6.5;
+    craneJib.add(bar(0.05, 0.05 + 0.9 * (1 - i / 7), 0.05, x, (0.9 * (1 - i / 7)) / 2, 0));
+  }
+  craneJib.add(bar(0.55, 0.45, 0.7, -CRANE.back + 0.2, -0.1, 0, matFloor));   // counterweight
+  craneHook = bar(0.16, 0.14, 0.16, 0, 0, 0, matPipe);
+  craneCable = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.012, 1, 6), matPipe);
+  craneJib.add(craneHook); craneJib.add(craneCable);
+  crane.add(craneJib);
+}
+scene.add(crane);
+
+// Put the hook at radius r along the jib with its underside at world height y, and
+// pay the cable out to suit. Returns nothing; the load is positioned by the caller.
+function craneHookTo(r, y) {
+  const localY = y - crane.position.y - CRANE.h;
+  craneHook.position.set(r, localY, 0);
+  craneCable.position.set(r, localY / 2, 0);
+  craneCable.scale.y = Math.max(Math.abs(localY), 0.01);
+}
+
+/* ---------------------------------------------------------------------------
+ * Tropical planting. Shared geometries, cloned meshes for the swaying plants,
+ * instanced meshes for the static ground layer (ferns, grass clumps).
+ * ------------------------------------------------------------------------- */
+const garden = new THREE.Group();
+scene.add(garden);
+const swayers = [];   // { obj, axis, base, amp, freq, phase }
+function sway(obj, axis, amp, freq, phase) { swayers.push({ obj, axis, base: obj.rotation[axis], amp, freq, phase }); }
+
+// -- shared geometry --------------------------------------------------------
+// Pinnate strip: bent, tapered outline; the leaflets come from the alpha-tested texture.
+function frondGeometry(L, W, droop) {
+  const segs = 9;
+  const geo = new THREE.PlaneGeometry(L, W, segs, 1);
+  const p = geo.attributes.position;
+  for (let i = 0; i < p.count; i++) {
+    const u = (p.getX(i) + L / 2) / L;
+    const halfW = (W / 2) * Math.sin(Math.PI * Math.min(1, u * 0.85 + 0.15)) + 0.02;
+    const side = Math.sign(p.getY(i)) || 1;
+    p.setX(i, u * L);
+    p.setY(i, -droop * u * u + Math.abs(p.getY(i)) * 0.12);
+    p.setZ(i, side * halfW);
+  }
+  geo.computeVertexNormals();
+  return geo;
+}
+// Banana paddle: oblong outline, folded along the midrib, drooping toward the tip.
+function bananaLeafGeometry(L, W) {
+  const geo = new THREE.PlaneGeometry(L, W, 14, 2);
+  const p = geo.attributes.position;
+  for (let i = 0; i < p.count; i++) {
+    const u = (p.getX(i) + L / 2) / L, s = p.getY(i) / (W / 2);
+    const halfW = (W / 2) * Math.pow(Math.sin(Math.PI * (0.05 + u * 0.95)), 0.55);
+    p.setX(i, u * L);
+    p.setZ(i, s * halfW);
+    p.setY(i, -0.45 * u * u * L - Math.abs(s) * 0.08);
+  }
+  geo.computeVertexNormals();
+  return geo;
+}
+// Monstera: heart outline with deep marginal splits and a few fenestrations.
+function monsteraGeometry() {
+  const lobes = [[-0.10, 0.10, 0.40], [0.14, 0.30, 0.46], [0.34, 0.48, 0.44], [0.52, 0.64, 0.37], [0.68, 0.78, 0.28]]; // [y0, y1, xOuter]
+  const right = [[0.10, -0.04], [0.24, -0.12]];
+  lobes.forEach((lb, i) => {
+    const y0 = lb[0], y1 = lb[1], xo = lb[2];
+    right.push([xo * 0.82, y0], [xo, (y0 + y1) / 2], [xo * 0.82, y1]);
+    if (i < lobes.length - 1) right.push([0.11, (y1 + lobes[i + 1][0]) / 2]);
+  });
+  right.push([0.15, 0.86], [0.06, 0.95]);
+  const shape = new THREE.Shape();
+  shape.moveTo(0, 0.02);
+  for (const pt of right) shape.lineTo(pt[0], pt[1]);
+  shape.lineTo(0, 1.0);
+  for (let i = right.length - 1; i >= 0; i--) shape.lineTo(-right[i][0], right[i][1]);
+  shape.closePath();
+  for (const h of [[0.17, 0.26, 0.055, 0.03], [-0.16, 0.44, 0.05, 0.028], [0.15, 0.58, 0.045, 0.025]]) {
+    const path = new THREE.Path();
+    path.absellipse(h[0], h[1], h[2], h[3], 0, Math.PI * 2, false, 0);
+    shape.holes.push(path);
+  }
+  const geo = new THREE.ShapeGeometry(shape, 8);
+  const p = geo.attributes.position, uv = geo.attributes.uv;
+  for (let i = 0; i < p.count; i++) uv.setXY(i, p.getX(i) + 0.5, (p.getY(i) + 0.15) / 1.2);
+  geo.rotateX(-Math.PI / 2).rotateY(-Math.PI / 2);   // tip -> +x, face -> +y
+  for (let i = 0; i < p.count; i++) {
+    const x = p.getX(i), z = p.getZ(i);
+    p.setY(i, -0.25 * z * z - 0.12 * x * x);          // edges and tip curl down
+  }
+  geo.computeVertexNormals();
+  return geo;
+}
+// Fern: rosette of arched fronds merged into one geometry (instanced later).
+function fernGeometry(seed) {
+  const r = mulberry32(seed);
+  const frond = new THREE.PlaneGeometry(1, 0.26, 8, 1);
+  const p = frond.attributes.position;
+  for (let i = 0; i < p.count; i++) {
+    const u = p.getX(i) + 0.5, w = p.getY(i);
+    p.setX(i, u); p.setZ(i, w); p.setY(i, 0.55 * u * (1 - u) - 0.35 * u * u);
+  }
+  frond.computeVertexNormals();
+  const list = [], m = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler(), s = new THREE.Vector3(), t = new THREE.Vector3();
+  const n = 10;
+  for (let i = 0; i < n; i++) {
+    e.set(0, (i / n) * Math.PI * 2 + r() * 0.5, 0.35 + r() * 0.45, 'YXZ');
+    q.setFromEuler(e);
+    const sc = 0.75 + r() * 0.35;
+    s.set(sc, sc, sc); t.set(0, 0.05, 0);
+    m.compose(t, q, s);
+    list.push(frond.clone().applyMatrix4(m));
+  }
+  return mergeGeos(list);
+}
+// Tall grass clump: 16 tapered, outward-leaning blades with a base-to-tip colour gradient.
+function grassClumpGeometry(seed) {
+  const r = mulberry32(seed), blades = 16, rows = 4;
+  const pos = [], nor = [], col = [], idx = [];
+  const cBase = new THREE.Color(0x4f7a26), cTip = new THREE.Color(0xb7cf58), c = new THREE.Color();
+  for (let b = 0; b < blades; b++) {
+    const az = r() * Math.PI * 2, h = 0.55 + r() * 0.45, lean = 0.25 + r() * 0.45, w0 = 0.035;
+    const dx = Math.cos(az), dz = Math.sin(az), spread = 0.06 * r();
+    const bx = dx * spread, bz = dz * spread;
+    const base = pos.length / 3;
+    for (let k = 0; k <= rows; k++) {
+      const t = k / rows, out = lean * t * t * h, y = h * t * (1 - 0.3 * t * t), hw = w0 * (1 - t) + 0.003;
+      const px = -dz * hw, pz = dx * hw;
+      pos.push(bx + dx * out - px, y, bz + dz * out - pz, bx + dx * out + px, y, bz + dz * out + pz);
+      c.lerpColors(cBase, cTip, t);
+      col.push(c.r, c.g, c.b, c.r, c.g, c.b);
+      nor.push(-dx * 0.3, 1, -dz * 0.3, -dx * 0.3, 1, -dz * 0.3);
+    }
+    for (let k = 0; k < rows; k++) { const a = base + k * 2; idx.push(a, a + 1, a + 2, a + 1, a + 3, a + 2); }
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(pos), 3));
+  geo.setAttribute('normal', new THREE.BufferAttribute(new Float32Array(nor), 3));
+  geo.setAttribute('color', new THREE.BufferAttribute(new Float32Array(col), 3));
+  geo.setIndex(idx);
+  geo.normalizeNormals();
+  return geo;
+}
+// Shrub blob: jittered sphere (jitter keyed on position so seam vertices stay welded), flat shaded.
+function blobGeometry(seed) {
+  const geo = new THREE.SphereGeometry(1, 9, 7);
+  const p = geo.attributes.position;
+  for (let i = 0; i < p.count; i++) {
+    const x = p.getX(i), y = p.getY(i), z = p.getZ(i);
+    const j = 0.82 + 0.3 * hash2(x * 7.1 + y * 3.3 + seed, z * 5.7 - y * 2.1);
+    p.setXYZ(i, x * j, y * j * 0.8, z * j);
+  }
+  geo.computeVertexNormals();
+  return geo;
+}
+
+const palmFrondGeo = frondGeometry(2.3, 0.75, 1.1);
+const bananaLeafGeo = bananaLeafGeometry(2.0, 0.70);
+const monsteraGeo = monsteraGeometry();
+const fernGeo = fernGeometry(7);
+const grassGeo = grassClumpGeometry(8);
+const blobGeo = blobGeometry(9);
+const flowerGeo = new THREE.SphereGeometry(0.055, 7, 6);
+const coconutGeo = new THREE.SphereGeometry(0.12, 8, 6);
+
+const matTrunk = new THREE.MeshStandardMaterial({ map: trunkTexture(51), roughness: 0.95 });
+const matPalmFrond = new THREE.MeshStandardMaterial({ map: pinnateTexture(52, 512, 128, 30, 60, 6, 0.95, [74, 150, 58]), alphaTest: 0.5, side: THREE.DoubleSide, roughness: 0.8 });
+const matFern = new THREE.MeshStandardMaterial({ map: pinnateTexture(53, 256, 64, 18, 22, 5, 1.1, [80, 145, 55]), alphaTest: 0.5, side: THREE.DoubleSide, roughness: 0.75 });
+const matBanana = new THREE.MeshStandardMaterial({ map: bananaTexture(54), alphaTest: 0.5, side: THREE.DoubleSide, roughness: 0.55 });
+const matBananaDry = new THREE.MeshStandardMaterial({ map: matBanana.map, color: 0x9a7a45, alphaTest: 0.5, side: THREE.DoubleSide, roughness: 0.9 });
+const matStem = new THREE.MeshStandardMaterial({ color: 0x86a45a, roughness: 0.8 });
+const matMonstera = new THREE.MeshStandardMaterial({ map: monsteraTexture(), side: THREE.DoubleSide, roughness: 0.38 });
+const matPetiole = new THREE.MeshStandardMaterial({ color: 0x3f7a2e, roughness: 0.7 });
+const matGrass = new THREE.MeshStandardMaterial({ vertexColors: true, side: THREE.DoubleSide, roughness: 0.85 });
+const matShrubA = new THREE.MeshStandardMaterial({ color: 0x2f6b28, roughness: 0.9, flatShading: true });
+const matShrubB = new THREE.MeshStandardMaterial({ color: 0x4d8a2c, roughness: 0.9, flatShading: true });
+const matFlowers = [
+  new THREE.MeshStandardMaterial({ color: 0xe8264a, roughness: 0.6 }),   // hibiscus red
+  new THREE.MeshStandardMaterial({ color: 0xff7a1f, roughness: 0.6 }),   // ixora orange
+  new THREE.MeshStandardMaterial({ color: 0xe23a9a, roughness: 0.6 }),   // bougainvillea magenta
+];
+const matCoconut = new THREE.MeshStandardMaterial({ color: 0x6b4b2a, roughness: 0.9 });
+
+// -- plant builders -----------------------------------------------------------
+function makePalm(x, z, seed, hScale) {
+  const r = mulberry32(seed);
+  const group = new THREE.Group();
+  group.position.set(x, terrainHeight(x, z) - 0.05, z);
+  const h = (3.8 + r() * 2.4) * hScale, segs = 6;   // crowns always clear the 3.24 m slab top
+  const leanX = (r() - 0.5) * 0.5, leanZ = (r() - 0.5) * 0.5;
+  let px = 0, py = 0, pz = 0;
+  for (let i = 0; i < segs; i++) {
+    const u = i / segs, len = h / segs;
+    const geo = new THREE.CylinderGeometry(0.13 - u * 0.045, 0.145 - u * 0.045, len * 1.06, 9);
+    const uv = geo.attributes.uv;
+    for (let k = 0; k < uv.count; k++) uv.setXY(k, uv.getX(k) * 2, uv.getY(k) * len);   // 1 ring tile per metre
+    const seg = new THREE.Mesh(geo, matTrunk);
+    const tx = leanX * u * u * 2, tz = leanZ * u * u * 2;
+    seg.position.set(px + tx * len * 0.5, py + len * 0.5, pz + tz * len * 0.5);
+    seg.rotation.z = -tx; seg.rotation.x = tz;
+    seg.castShadow = true;
+    group.add(seg);
+    px += tx * len; py += len; pz += tz * len;
+  }
+  const crown = new THREE.Group();
+  crown.position.set(px, py, pz);
+  group.add(crown);
+  const n = 10;
+  for (let i = 0; i < n; i++) {
+    const pivot = new THREE.Group();
+    pivot.rotation.y = (i / n) * Math.PI * 2 + r() * 0.4;
+    const m = new THREE.Mesh(palmFrondGeo, matPalmFrond);
+    m.rotation.z = 0.3 + r() * 0.5;   // positive raises the tip; the geometry droops it back down
+    m.castShadow = true;
+    pivot.add(m); crown.add(pivot);
+    sway(m, 'z', 0.04, 1.7, r() * 6.28);
+  }
+  for (let i = 0; i < 3; i++) {
+    const c = new THREE.Mesh(coconutGeo, matCoconut);
+    c.position.set((r() - 0.5) * 0.3, -0.15, (r() - 0.5) * 0.3);
+    crown.add(c);
+  }
+  sway(crown, 'z', 0.025, 0.9, r() * 6.28);
+  sway(crown, 'x', 0.02, 0.7, r() * 6.28);
+  garden.add(group);
+}
+function makeBanana(x, z, seed) {
+  const r = mulberry32(seed);
+  const group = new THREE.Group();
+  group.position.set(x, terrainHeight(x, z), z);
+  group.rotation.y = r() * 6.28;
+  const h = 1.3 + r() * 0.8;
+  const stem = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.11, h, 10), matStem);
+  stem.position.y = h / 2; stem.castShadow = true; group.add(stem);
+  const n = 6 + Math.floor(r() * 3);
+  for (let i = 0; i < n; i++) {
+    const pivot = new THREE.Group();
+    pivot.position.y = h - 0.05 * i;
+    pivot.rotation.y = i * 2.4 + r() * 0.5;
+    pivot.rotation.z = 0.95 - i * 0.13 + r() * 0.2;   // older leaves hang lower
+    const leaf = new THREE.Mesh(bananaLeafGeo, matBanana);
+    const s = 0.8 + r() * 0.3;
+    leaf.scale.set(s, s, s);
+    leaf.castShadow = true;
+    pivot.add(leaf); group.add(pivot);
+    sway(pivot, 'z', 0.035, 1.1, r() * 6.28);
+  }
+  const dead = new THREE.Group();
+  dead.position.y = h - 0.5; dead.rotation.y = r() * 6.28; dead.rotation.z = -1.25;
+  const dl = new THREE.Mesh(bananaLeafGeo, matBananaDry);
+  dl.scale.set(0.7, 0.7, 0.7); dl.castShadow = true;
+  dead.add(dl); group.add(dead);
+  sway(group, 'z', 0.012, 0.6, r() * 6.28);
+  garden.add(group);
+}
+function makeMonstera(x, z, seed) {
+  const r = mulberry32(seed);
+  const group = new THREE.Group();
+  group.position.set(x, terrainHeight(x, z), z);
+  group.rotation.y = r() * 6.28;
+  const n = 5 + Math.floor(r() * 4);
+  for (let i = 0; i < n; i++) {
+    const pivot = new THREE.Group();
+    pivot.position.y = 0.05;
+    pivot.rotation.y = i * 2.4 + r() * 0.6;
+    pivot.rotation.z = -(0.45 + r() * 0.5);   // lean outward
+    const pl = 0.5 + r() * 0.45;
+    const pet = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.016, pl, 6), matPetiole);
+    pet.position.y = pl / 2; pivot.add(pet);
+    const leaf = new THREE.Mesh(monsteraGeo, matMonstera);
+    const s = 0.5 + r() * 0.3;
+    leaf.scale.set(s, s, s);
+    leaf.position.y = pl;
+    leaf.rotation.z = 0.25 + r() * 0.25;
+    leaf.rotation.y = (r() - 0.5) * 0.5;
+    leaf.castShadow = true;
+    pivot.add(leaf); group.add(pivot);
+  }
+  sway(group, 'z', 0.015, 0.8, r() * 6.28);
+  sway(group, 'x', 0.012, 1.0, r() * 6.28);
+  garden.add(group);
+}
+function makeShrub(x, z, seed, flowerMat) {
+  const r = mulberry32(seed);
+  const group = new THREE.Group();
+  group.position.set(x, terrainHeight(x, z) - 0.05, z);
+  const mat = r() < 0.5 ? matShrubA : matShrubB;
+  const size = 0.55 + r() * 0.55, n = 4 + Math.floor(r() * 4);
+  for (let i = 0; i < n; i++) {
+    const m = new THREE.Mesh(blobGeo, mat);
+    const s = size * (0.45 + r() * 0.4);
+    m.scale.set(s, s, s);
+    m.position.set((r() - 0.5) * size * 0.9, s * 0.6 + r() * size * 0.3, (r() - 0.5) * size * 0.9);
+    m.rotation.y = r() * 6.28;
+    m.castShadow = true; m.receiveShadow = true;
+    group.add(m);
+  }
+  if (flowerMat) {
+    const fn = 6 + Math.floor(r() * 7);
+    for (let i = 0; i < fn; i++) {
+      const a = r() * 6.28, rr = size * (0.45 + r() * 0.35), y = size * (0.5 + r() * 0.6);
+      const f = new THREE.Mesh(flowerGeo, flowerMat);
+      f.position.set(Math.cos(a) * rr, y, Math.sin(a) * rr);
+      group.add(f);
+    }
+  }
+  sway(group, 'z', 0.006, 1.3, r() * 6.28);
+  garden.add(group);
+}
+
+// -- placement ---------------------------------------------------------------
+// Keep-outs: building + gravel strip, driveway, door path.
+const KEEP = [
+  [X0 - 0.5, X2 + 0.5, Z0 - 0.5, Z1 + 0.5],
+  [X0 + 0.1, X1 - 0.1, DRIVE_Z - 0.3, Z0],
+  [X1 - 0.3, DOOR_X1 + 0.3, PATH_Z - 0.3, Z0],
+  [DOOR_X0 - 0.7, DOOR_X1 + 0.7, Z1, Z1 + 1.7],
+  [FIG.x - 0.5, FIG.x + 0.5, FIG.z - 0.5, FIG.z + 0.5],
+];
+const occupied = [];   // [x, z, r]
+function isFree(x, z, r) {
+  for (const k of KEEP) if (x > k[0] - r && x < k[1] + r && z > k[2] - r && z < k[3] + r) return false;
+  for (const o of occupied) if (Math.hypot(o[0] - x, o[1] - z) < o[2] + r) return false;
+  return true;
+}
+function placeIn(rect, n, r, fn) {
+  let c = 0, tries = 0;
+  while (c < n && tries++ < n * 80) {
+    const x = lerp(rect[0], rect[1], rng()), z = lerp(rect[2], rect[3], rng());
+    if (!isFree(x, z, r)) continue;
+    occupied.push([x, z, r]);
+    fn(x, z, c);
+    c++;
+  }
+}
+let plantSeed = 1000;
+const nextSeed = () => plantSeed++;
+const fernXf = [], grassXf = [];   // [x, y, z, yaw, scale] for the instanced ground layer
+
+// Palms: tall layer at the back and the sides, well clear of the slab edge.
+placeIn([-8, 8, 4.0, 6.5], 3, 1.6, (x, z) => makePalm(x, z, nextSeed(), 1.0));
+placeIn([-8.5, -6.5, -3.5, 2.5], 1, 1.6, (x, z) => makePalm(x, z, nextSeed(), 1.05));
+placeIn([6.5, 8.5, -2.5, 2.5], 1, 1.6, (x, z) => makePalm(x, z, nextSeed(), 0.9));
+// Bananas: mid layer, massed at the back and west.
+placeIn([-8, 8, 3.8, 6.2], 4, 1.1, (x, z) => makeBanana(x, z, nextSeed()));
+placeIn([-8.5, -6.0, -3.8, 2.6], 2, 1.1, (x, z) => makeBanana(x, z, nextSeed()));
+placeIn([6.6, 8.5, -1.5, 2.6], 1, 1.1, (x, z) => makeBanana(x, z, nextSeed()));
+// Monstera: broad leaves in the shade zones close to the walls.
+placeIn(BEDS[1], 3, 0.65, (x, z) => makeMonstera(x, z, nextSeed()));
+placeIn(BEDS[0], 3, 0.65, (x, z) => makeMonstera(x, z, nextSeed()));
+placeIn(BEDS[2], 2, 0.65, (x, z) => makeMonstera(x, z, nextSeed()));
+placeIn(BEDS[3], 2, 0.65, (x, z) => makeMonstera(x, z, nextSeed()));
+// Flowering shrubs: colour accents at the front, structure at the back.
+placeIn(BEDS[3], 4, 0.75, (x, z, i) => makeShrub(x, z, nextSeed(), matFlowers[i % 3]));
+placeIn(BEDS[4], 5, 0.75, (x, z, i) => makeShrub(x, z, nextSeed(), matFlowers[(i + 1) % 3]));
+placeIn(BEDS[0], 4, 0.75, (x, z, i) => makeShrub(x, z, nextSeed(), i % 2 ? matFlowers[0] : null));
+placeIn(BEDS[2], 2, 0.75, (x, z) => makeShrub(x, z, nextSeed(), matFlowers[2]));
+placeIn(BEDS[1], 1, 0.75, (x, z) => makeShrub(x, z, nextSeed(), null));
+// Ground layer: ferns and tall grasses (instanced).
+const fernAt = (x, z) => fernXf.push([x, terrainHeight(x, z), z, rng() * 6.28, 0.6 + rng() * 0.45]);
+const grassAt = (x, z) => grassXf.push([x, terrainHeight(x, z) - 0.02, z, rng() * 6.28, 0.7 + rng() * 0.5]);
+placeIn(BEDS[0], 10, 0.45, fernAt);
+placeIn(BEDS[1], 6, 0.45, fernAt);
+placeIn(BEDS[3], 8, 0.45, fernAt);
+placeIn(BEDS[2], 5, 0.45, fernAt);
+placeIn(BEDS[4], 4, 0.45, fernAt);
+placeIn(BEDS[3], 10, 0.35, grassAt);
+placeIn(BEDS[4], 10, 0.35, grassAt);
+placeIn(BEDS[2], 6, 0.35, grassAt);
+placeIn(BEDS[0], 6, 0.35, grassAt);
+// Backdrop: a ring of palms and shrubs around the back and sides of the plot.
+for (let i = 0; i < 9; i++) {
+  const a = -Math.PI * 0.55 + (i / 8) * Math.PI * 1.1 + (rng() - 0.5) * 0.15, R = 12 + rng() * 5;
+  const x = Math.sin(a) * R, z = Math.cos(a) * R;
+  occupied.push([x, z, 1.6]);
+  makePalm(x, z, nextSeed(), 1.15);
+}
+for (let i = 0; i < 12; i++) {
+  const a = -Math.PI * 0.65 + rng() * Math.PI * 1.3, R = 10 + rng() * 6;
+  const x = Math.sin(a) * R, z = Math.cos(a) * R;
+  if (!isFree(x, z, 0.8)) continue;
+  occupied.push([x, z, 0.8]);
+  makeShrub(x, z, nextSeed(), rng() < 0.4 ? matFlowers[Math.floor(rng() * 3)] : null);
+}
+{
+  const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler(), s = new THREE.Vector3(), t = new THREE.Vector3();
+  const build = (geo, mat, xf) => {
+    const im = new THREE.InstancedMesh(geo, mat, xf.length);
+    for (let i = 0; i < xf.length; i++) {
+      const f = xf[i];
+      e.set(0, f[3], 0); q.setFromEuler(e); s.set(f[4], f[4], f[4]); t.set(f[0], f[1], f[2]);
+      m4.compose(t, q, s); im.setMatrixAt(i, m4);
+    }
+    im.instanceMatrix.needsUpdate = true;
+    im.castShadow = true; im.receiveShadow = true;
+    garden.add(im);
+  };
+  build(fernGeo, matFern, fernXf);
+  build(grassGeo, matGrass, grassXf);
+}
+
+/* ---------------------------------------------------------------------------
+ * Dimension lines: 3D lines with cone arrowheads, witness lines and sprite labels.
+ * Lengths on the labels are measured from the actual points, not typed in.
+ * ------------------------------------------------------------------------- */
+const dims = new THREE.Group();
+dims.visible = false;
+scene.add(dims);
+const matDimLine = new THREE.LineBasicMaterial({ color: 0xffb45c });
+const matDimWit = new THREE.LineBasicMaterial({ color: 0xffb45c, transparent: true, opacity: 0.45 });
+const matDimArrow = new THREE.MeshBasicMaterial({ color: 0xffb45c });
+const arrowGeo = new THREE.ConeGeometry(0.035, 0.14, 8);
+const UP = new THREE.Vector3(0, 1, 0);
+const V = (x, y, z) => new THREE.Vector3(x, y, z);
+function roundRect(g, x, y, w, h, r) {
+  g.beginPath(); g.moveTo(x + r, y); g.lineTo(x + w - r, y); g.arcTo(x + w, y, x + w, y + r, r);
+  g.lineTo(x + w, y + h - r); g.arcTo(x + w, y + h, x + w - r, y + h, r); g.lineTo(x + r, y + h);
+  g.arcTo(x, y + h, x, y + h - r, r); g.lineTo(x, y + r); g.arcTo(x, y, x + r, y, r); g.closePath();
+}
+function labelSprite(value, name) {
+  const cv = makeCanvas(256, 112), g = cv.getContext('2d');
+  g.fillStyle = 'rgba(8,20,14,0.8)'; roundRect(g, 8, 8, 240, 96, 14); g.fill();
+  g.textAlign = 'center'; g.textBaseline = 'middle';
+  g.fillStyle = '#ffb45c'; g.font = '500 46px "IBM Plex Mono", Menlo, Consolas, monospace';
+  g.fillText(value + ' m', 128, name ? 46 : 56);
+  if (name) {
+    g.fillStyle = 'rgba(233,241,239,0.78)'; g.font = '600 22px "Barlow Condensed", "Helvetica Neue", Arial, sans-serif';
+    g.fillText(name.toUpperCase(), 128, 84);
+  }
+  const t = new THREE.CanvasTexture(cv); t.colorSpace = THREE.SRGBColorSpace;
+  const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: t, depthTest: false, transparent: true }));
+  sp.scale.set(1.15, 1.15 * 112 / 256, 1);
+  sp.renderOrder = 10;
+  return sp;
+}
+function dimLine(a, b, mat) { dims.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints([a, b]), mat)); }
+function dimArrow(tip, dir) {
+  const m = new THREE.Mesh(arrowGeo, matDimArrow);
+  m.quaternion.setFromUnitVectors(UP, dir);
+  m.position.copy(tip).addScaledVector(dir, -0.07);
+  dims.add(m);
+}
+// a, b: measured points. off: from the measured points to the dimension line. labelOff: from the line midpoint.
+function dimension(a, b, off, name, labelOff) {
+  const a2 = a.clone().add(off), b2 = b.clone().add(off);
+  dimLine(a2, b2, matDimLine);
+  dimLine(a, a.clone().addScaledVector(off, 1.12), matDimWit);
+  dimLine(b, b.clone().addScaledVector(off, 1.12), matDimWit);
+  const d = b2.clone().sub(a2), len = d.length();
+  d.normalize();
+  dimArrow(b2, d);
+  dimArrow(a2, d.clone().negate());
+  const s = labelSprite(len.toFixed(2), name);
+  s.position.copy(a2).lerp(b2, 0.5).add(labelOff || V(0, 0.24, 0));
+  dims.add(s);
+}
+function buildDimensions() {
+  const yG = 0.03, yFront = SLAB_TOP + SLAB_FALL;
+  dimension(V(X0, yG, Z0), V(X1, yG, Z0), V(0, 0, -1.2), 'Carport');
+  dimension(V(X1, yG, Z0), V(X2, yG, Z0), V(0, 0, -1.2), 'Shed');
+  dimension(V(X0, yG, Z0), V(X0, yG, Z1), V(-1.2, 0, 0), 'Depth');
+  dimension(V(X0 - OVERHANG, yFront, Z0 - OVERHANG), V(X2 + OVERHANG, yFront, Z0 - OVERHANG), V(0, 0.6, 0), 'Slab');
+  dimension(V(X2 + OVERHANG, yFront, Z0 - OVERHANG), V(X2 + OVERHANG, yFront, Z1 + OVERHANG), V(0, 0.6, 0), 'Slab');
+  dimension(V(X2, 0, Z0), V(X2, WALL_H, Z0), V(0.6, 0, -0.6), 'Height', V(0.5, 0, 0));
+  dimension(V(X2 + OVERHANG, SLAB_Y, Z1 + OVERHANG), V(X2 + OVERHANG, SLAB_TOP, Z1 + OVERHANG), V(0.45, 0, 0.45), 'Slab', V(0.5, 0, 0));
+  dimension(V(X2, SLAB_Y, Z0), V(X2 + OVERHANG, SLAB_Y, Z0), V(0, -0.45, -0.5), 'Overhang', V(0, -0.22, 0));
+  dimension(V(X0, yG, Z0), V(X0 + COL, yG, Z0), V(0, 0, -0.55), 'Column', V(0, 0.2, 0));
+  // Measured off the shared wall's south end, where the dimension line stands clear of the building.
+  dimension(V(X1, 0.9, Z0 - 0.02), V(X1 + WALL_T, 0.9, Z0 - 0.02), V(0, 0, -0.5), 'Wall', V(0, 0.22, 0));
+  dimension(V(DOOR_X0, DOOR_H, Z0), V(DOOR_X1, DOOR_H, Z0), V(0, 0.28, -0.25), 'Door');
+  dimension(V(DOOR_X1, 0, Z0), V(DOOR_X1, DOOR_H, Z0), V(0.28, 0, -0.25), 'Door', V(0.45, 0, 0));
+  dimension(V(FIG.x, FIG.y, FIG.z), V(FIG.x, FIG.y + HUMAN_H, FIG.z), V(0.5, 0, 0), 'Figure', V(0.45, 0, 0));
+}
+// Labels are drawn on canvases, so wait for the web fonts before rasterising them.
+{
+  const loads = document.fonts && document.fonts.load
+    ? [document.fonts.load('500 46px "IBM Plex Mono"'), document.fonts.load('600 22px "Barlow Condensed"')]
+    : [];
+  Promise.all(loads).catch(() => {}).then(buildDimensions);
+}
+
+/* ---------------------------------------------------------------------------
+ * HUD: spec block built from the constants, control buttons
+ * ------------------------------------------------------------------------- */
+const f2 = v => v.toFixed(2);
+const X = ' × ';
+const sunRowEl = (() => {
+  const grid = document.getElementById('tele');
+  const rows = [
+    ['Shed', f2(SHED_W) + X + f2(SHED_D) + X + f2(WALL_H), 'm'],
+    ['Carport', f2(CARPORT_W) + X + f2(CARPORT_D), 'm'],
+    ['Slab', f2(SLAB_W) + X + f2(SLAB_D) + X + f2(SLAB_T), 'm'],
+    ['Overhang', f2(OVERHANG), 'm'],
+    ['Fall', f2(SLAB_FALL) + ' / ' + f2(SLAB_D), 'm'],
+    ['Wall', f2(WALL_T), 'm'],
+    ['Column', f2(COL) + X + f2(COL), 'm'],
+    ['Doors', '2 × ' + f2(DOOR_W) + X + f2(DOOR_H), 'm'],
+    ['Block', f2(BLK_L) + X + f2(BLK_H) + X + f2(WALL_T), 'm'],
+    ['Parts', String(parts.length), 'pieces'],
+    ['Sun', '–', 'az / el'],
+  ];
+  let sunEl = null;
+  for (const [label, value, unit] of rows) {
+    const k = document.createElement('div'); k.className = 'k'; k.textContent = label;
+    const v = document.createElement('div'); v.className = 'v'; v.textContent = value;
+    const u = document.createElement('div'); u.className = 'u'; u.textContent = unit;
+    grid.append(k, v, u);
+    if (label === 'Sun') sunEl = v;
+  }
+  return sunEl;
+})();
+
+const bDim = document.getElementById('bDim'), bSun = document.getElementById('bSun'), bGhost = document.getElementById('bGhost');
+const bExpl = document.getElementById('bExpl');
+const sunValEl = document.getElementById('sunVal');
+const subEl = document.getElementById('sub'), SUB_ASSEMBLED = subEl.textContent;
+let ghost = false;
+// Exploded view: exploded is the switch, explodeT the eased 0..1 the frame loop drives.
+let exploded = false, explodeT = 0, explodeE = 0;
+const bBuild = document.getElementById('bBuild'), buildValEl = document.getElementById('buildVal');
+function toggleDims() {
+  dims.visible = !dims.visible;
+  bDim.classList.toggle('on', dims.visible);
+  bDim.setAttribute('aria-pressed', String(dims.visible));
+}
+function cycleSun() {
+  sunIdx = (sunIdx + 1) % SUN_PRESETS.length;
+  sunValEl.textContent = SUN_PRESETS[sunIdx].name;
+}
+function toggleGhost() {
+  if (buildOn) buildFinish();
+  ghost = !ghost;
+  matConcrete.transparent = ghost;
+  matConcrete.opacity = ghost ? 0.28 : 1;
+  matConcrete.depthWrite = !ghost;
+  matConcrete.needsUpdate = true;
+  slab.castShadow = !ghost;
+  bGhost.classList.toggle('on', ghost);
+  bGhost.setAttribute('aria-pressed', String(ghost));
+}
+function explodeOff() {
+  exploded = false; explodeT = 0; explodeE = 0;
+  bExpl.classList.remove('on'); bExpl.setAttribute('aria-pressed', 'false');
+}
+function toggleExplode() {
+  if (buildOn) buildFinish();       // the two views are exclusive; finish the building first
+  exploded = !exploded;
+  // Back off far enough to see the whole spread, and give the zoom back on the way in.
+  manual.radius = clamp(manual.radius * (exploded ? 1.8 : 1 / 1.8), 4, 40);
+  subEl.textContent = exploded ? parts.length + ' parts · pulled apart' : SUB_ASSEMBLED;
+  bExpl.classList.toggle('on', exploded);
+  bExpl.setAttribute('aria-pressed', String(exploded));
+}
+bDim.addEventListener('click', toggleDims);
+bSun.addEventListener('click', cycleSun);
+bGhost.addEventListener('click', toggleGhost);
+bExpl.addEventListener('click', toggleExplode);
+bBuild.addEventListener('click', toggleBuild);
+window.addEventListener('keydown', e => {
+  if (e.altKey || e.ctrlKey || e.metaKey) return;
+  const k = e.key.toLowerCase();
+  if (k === 'd') toggleDims(); else if (k === 's') cycleSun();
+  else if (k === 'g') toggleGhost(); else if (k === 'x') toggleExplode();
+  else if (k === 'b') toggleBuild();
+});
+
+
+/* ---------------------------------------------------------------------------
+ * Build sequence
+ *
+ * The site figure lays the building up part by part in the order it would really
+ * be built: slab on grade, then course after course of blockwork with the lintels
+ * dropped in as the openings top out, then the roof slab on the crane, then the
+ * doors and the fittings. The mason climbs onto a trestle once a course goes
+ * above comfortable laying height, so the sequence is watchable as instructions.
+ * ------------------------------------------------------------------------- */
+const BUILD_PHASE = { floor: 0, block: 1, lintel: 1, roof: 2, door: 3, fitting: 4 };
+const BUILD_SECS  = { floor: 1.1, block: 0.14, lintel: 0.9, roof: 6.0, door: 0.55, fitting: 0.5 };
+// What the figure carries in its own hands, as opposed to what is cast or craned in.
+const HAND_LAID = { block: 1, lintel: 1, door: 1, fitting: 1 };
+const CARRY = { fwd: 0.46, drop: 0.44 };   // where a carried piece sits, off the shoulders
+const HOLD_U = 0.55;                     // held in the hands up to here, then set down
+const BUILD_REACH = { floor: 0.5, block: 0.85, lintel: 1.1, roof: 0, door: 1.2, fitting: 0.8 };
+const COURSES = Math.round(WALL_H / BLK_H);
+
+// Trade by trade; inside the blockwork, course by course, wall by wall, along the wall.
+// The lintel's own bottom edge sits between two courses, so it falls into place by itself.
+const buildOrder = parts.map((p, i) => i).sort((a, b) => {
+  const A = parts[a], B = parts[b];
+  const phase = BUILD_PHASE[A.kind] - BUILD_PHASE[B.kind];
+  if (phase) return phase;
+  // Blockwork goes course by course; the other trades follow their own assembly order.
+  if (BUILD_PHASE[A.kind] === 1 && Math.abs(A.y0 - B.y0) > 1e-4) return A.y0 - B.y0;
+  if (A.tag !== B.tag) return A.tag - B.tag;
+  return A.run - B.run;
+});
+// Where each part comes in from: back along the way it would fly out in the exploded
+// view, so a block is set down from outside and above the wall it belongs to.
+for (const p of parts) {
+  const k = BUILD_REACH[p.kind];
+  p.approach = p.expl.lengthSq() > 1e-6 ? p.expl.clone().normalize().multiplyScalar(k) : OUT(0, k, 0);
+  p.homeOff = p.home.clone().sub(p.centre);   // put the piece's centre at X: position = X + homeOff
+}
+
+let buildOn = false, buildHold = false, buildIdx = 0, buildT = 0, buildLift = 0, buildNoteShown = '';
+const hook = { r: 2.4, y: 0 };   // where the crane hook is, so it can hoist back up after the lift
+let buildValShown = '';
+
+function buildNote(p) {
+  switch (p.kind) {
+    case 'floor':  return 'Slab on grade · 150 mm on the prepared sub-base';
+    case 'block':  return 'Course ' + Math.min(COURSES, Math.floor(p.y0 / BLK_H) + 1) + ' of ' + COURSES +
+                          ' · Ytong 625 × 250 × 300, thin-bed, half-block bond';
+    case 'lintel': return 'Lintel over the opening · 1400 long, 200 bearing each side';
+    case 'roof':   return 'Roof slab by crane · one 200 mm RC pour over both bays';
+    case 'door':   return 'Doors · frame set in the reveal, then leaf and handle';
+    default:       return 'Rainwater goods and light fittings';
+  }
+}
+function buildUI() {
+  bBuild.classList.toggle('on', buildOn);
+  const v = buildOn ? (buildHold ? 'Paused ' : '') + buildIdx + '/' + buildOrder.length : '';
+  if (v !== buildValShown) buildValEl.textContent = buildValShown = v;
+}
+function buildStart() {
+  explodeOff();
+  buildOn = true; buildHold = false; buildIdx = 0; buildT = 0; buildNoteShown = '';
+  for (const p of parts) { p.obj.visible = false; p.obj.position.copy(p.home); p.obj.updateMatrix(); }
+  crane.visible = true;
+  hook.r = 2.4; hook.y = crane.position.y + CRANE.h - 2.2;
+  craneHookTo(hook.r, hook.y);
+  buildUI();
+}
+function buildFinish() {
+  buildOn = false; buildHold = false; buildIdx = buildOrder.length;
+  for (const p of parts) { p.obj.visible = true; p.obj.position.copy(p.home); p.obj.updateMatrix(); }
+  crane.visible = false; trestle.visible = false;
+  figure.position.set(FIG.x, FIG.y, FIG.z); figure.rotation.y = FIG.yaw;
+  for (const a of figArms) a.quaternion.copy(a.rest);
+  figUpper.rotation.x = 0;
+  subEl.textContent = exploded ? parts.length + ' parts · pulled apart' : SUB_ASSEMBLED;
+  buildUI();
+}
+function toggleBuild() {
+  if (!buildOn) buildStart();
+  else { buildHold = !buildHold; buildUI(); }
+}
+
+// Trolley runs out along the jib with the slab held high, then the hoist lowers it home.
+const cranePos = new THREE.Vector3();
+function craneLift(p, u) {
+  const r = lerp(2.4, CRANE.reach, smoothstep(0, 1, clamp(u / 0.45, 0, 1)));
+  const drop = smoothstep(0, 1, clamp((u - 0.45) / 0.55, 0, 1));
+  const y = lerp(crane.position.y + CRANE.h - 1.9, p.centre.y, drop);
+  cranePos.set(CRANE.x + Math.cos(CRANE.yaw) * r, y, CRANE.z - Math.sin(CRANE.yaw) * r);
+  p.obj.position.copy(cranePos).add(p.homeOff);
+  p.obj.updateMatrix();
+  hook.r = r; hook.y = y + SLAB_T / 2 + 0.12;
+  craneHookTo(hook.r, hook.y);
+}
+
+const DOWN = new THREE.Vector3(0, -1, 0);
+const _hand = new THREE.Vector3(), _aim = new THREE.Vector3(), _q = new THREE.Quaternion();
+const _sh = new THREE.Vector3();
+
+// Where a carried piece sits: off the shoulders, forward and down, so it lands just
+// within arm's length of both of them — and it follows the trunk when the figure stoops.
+function carryPoint(out) {
+  figArms[0].getWorldPosition(out);
+  figArms[1].getWorldPosition(_sh);
+  out.add(_sh).multiplyScalar(0.5);
+  out.x += Math.sin(figure.rotation.y) * CARRY.fwd;
+  out.z += Math.cos(figure.rotation.y) * CARRY.fwd;
+  out.y -= CARRY.drop;
+  return out;
+}
+// Aim both arms at `target` (world), a hand either side of it; null lets them hang.
+// Worked in each shoulder's own parent frame, so the trunk's stoop is already in it.
+function siteArms(target, dt) {
+  const k = damp(16, dt);
+  for (let i = 0; i < figArms.length; i++) {
+    const arm = figArms[i];
+    if (target) {
+      _aim.copy(target);
+      arm.parent.worldToLocal(_aim);
+      _aim.sub(arm.shoulder);
+      _aim.x += i ? 0.16 : -0.16;              // a hand to each side of the piece
+      if (_aim.lengthSq() < 1e-6) _aim.copy(DOWN);
+      _q.setFromUnitVectors(DOWN, _aim.normalize());
+    } else _q.copy(arm.rest);
+    arm.quaternion.slerp(_q, k);
+  }
+}
+
+// The mason stands on the side the part is placed from, on a trestle once the course
+// is above comfortable laying height, and reaches up as the piece goes down.
+function siteFollow(p, dt) {
+  let tx, tz, deck = 0;
+  if (p.kind === 'roof') {
+    // Nobody stands under the load: the figure banks the lift in from the hardstanding.
+    tx = CRANE.x + 1.3; tz = CRANE.z + 2.3;
+  } else {
+    let dx = p.expl.x, dz = p.expl.z;
+    let l = Math.hypot(dx, dz);
+    if (l < 0.2) { dx = FIG.x - p.centre.x; dz = FIG.z - p.centre.z; l = Math.hypot(dx, dz) || 1; }
+    dx /= l; dz /= l;
+    // Close enough that the piece is within arm's length, but clear of the wall face.
+    tx = p.centre.x + dx * 0.70; tz = p.centre.z + dz * 0.70;
+    // Trestle only for work laid by hand: 500 mm steps, chosen to bring the course
+    // up to chest height rather than merely within reach.
+    if (HAND_LAID[p.kind]) {
+      const ground0 = terrainHeight(tx, tz);
+      deck = clamp(Math.round((p.centre.y - 1.38 - ground0) / 0.5) * 0.5, 0, 2.0);
+    }
+  }
+  const ground = terrainHeight(tx, tz);
+  const k = damp(8, dt);
+  figure.position.x += (tx - figure.position.x) * k;
+  figure.position.z += (tz - figure.position.z) * k;
+  figure.position.y += (ground + deck - figure.position.y) * k;
+  let turn = Math.atan2(p.centre.x - figure.position.x, p.centre.z - figure.position.z) - figure.rotation.y;
+  while (turn > Math.PI) turn -= 2 * Math.PI;
+  while (turn < -Math.PI) turn += 2 * Math.PI;
+  figure.rotation.y += turn * k;
+  // Stoop toward anything below chest height; upright once the trestle has raised the
+  // work. The bottom courses need the trunk almost horizontal, which is how they are laid.
+  const stoop = clamp((figure.position.y + 1.30 - p.centre.y) / 0.9, 0, 1) * 1.45;
+  figUpper.rotation.x += (stoop - figUpper.rotation.x) * k;
+  figure.updateMatrixWorld(true);
+  trestle.visible = deck > 0;
+  if (deck > 0) {
+    trestle.position.set(figure.position.x, ground + deck, figure.position.z);
+    trestle.rotation.y = figure.rotation.y;
+    for (const c of trestle.children) if (c.name === 'leg') { c.scale.y = deck; c.position.y = -deck / 2; }
+  }
+}
+
+function buildFrame(dt) {
+  if (!buildOn) return;
+  if (!buildHold) buildT += dt;
+  // Settle every part whose time is up; a slow frame may cover several blocks.
+  let guard = 0;
+  while (buildIdx < buildOrder.length && guard++ < 400) {
+    const p = parts[buildOrder[buildIdx]];
+    if (buildT < BUILD_SECS[p.kind]) break;
+    buildT -= BUILD_SECS[p.kind];
+    p.obj.visible = true; p.obj.position.copy(p.home); p.obj.updateMatrix();
+    buildIdx++;
+  }
+  if (buildIdx >= buildOrder.length) { buildFinish(); return; }
+  const p = parts[buildOrder[buildIdx]];
+  const u = smoothstep(0, 1, clamp(buildT / BUILD_SECS[p.kind], 0, 1));
+  p.obj.visible = true;
+  siteFollow(p, dt);           // walk and climb first, so the hands are where they will be
+  if (p.kind === 'roof') { craneLift(p, u); siteArms(null, dt); }
+  else {
+    if (HAND_LAID[p.kind]) {
+      // Held in both hands, then set down: the piece leaves the chest only at HOLD_U.
+      carryPoint(_hand);
+      const place = clamp((u - HOLD_U) / (1 - HOLD_U), 0, 1);
+      _hand.lerp(p.centre, place);
+      p.obj.position.copy(_hand).add(p.homeOff);
+      siteArms(_hand, dt);
+    } else {
+      p.obj.position.copy(p.home).addScaledVector(p.approach, 1 - u);
+      siteArms(null, dt);
+    }
+    p.obj.updateMatrix();
+    const k = damp(1.6, dt);   // hoist back up to the parked position between lifts
+    hook.r += (2.4 - hook.r) * k;
+    hook.y += (crane.position.y + CRANE.h - 2.2 - hook.y) * k;
+    craneHookTo(hook.r, hook.y);
+  }
+  const note = buildNote(p);
+  if (note !== buildNoteShown) { subEl.textContent = buildNoteShown = note; }
+  buildUI();
+}
+
+/* ---------------------------------------------------------------------------
+ * Camera: hero three-quarter view with a slow drift, blended with manual orbit
+ * ------------------------------------------------------------------------- */
+const TARGET = new THREE.Vector3(0.2, 1.35, -0.2);
+const TARGET_Y = TARGET.y;
+const HERO = { theta: 2.46, phi: 1.30, radius: 13.0 };   // from the south-east: shed on the left, carport opening and slab edge running right
+const manual = { weight: 0, theta: 0, phi: 1.1, radius: 13, lastInput: -1e9, dragging: false, lx: 0, ly: 0 };
+const hintEl = document.getElementById('hint'), dotEl = document.getElementById('dot');
+function beginManual() {
+  if (manual.weight < 0.5) {
+    const off = camera.position.clone().sub(TARGET);
+    manual.radius = Math.max(off.length(), 4);
+    manual.theta = Math.atan2(off.x, off.z);
+    manual.phi = Math.acos(clamp(off.y / manual.radius, -1, 1));
+  }
+  manual.lastInput = time;
+}
+canvas.addEventListener('pointerdown', e => {
+  beginManual(); manual.dragging = true; manual.lx = e.clientX; manual.ly = e.clientY;
+  canvas.classList.add('dragging'); canvas.setPointerCapture(e.pointerId);
+});
+canvas.addEventListener('pointermove', e => {
+  if (!manual.dragging) return;
+  manual.theta -= (e.clientX - manual.lx) * 0.005;
+  manual.phi = clamp(manual.phi - (e.clientY - manual.ly) * 0.005, 0.1, 1.52);
+  manual.lx = e.clientX; manual.ly = e.clientY; manual.lastInput = time;
+});
+const endDrag = () => { manual.dragging = false; manual.lastInput = time; canvas.classList.remove('dragging'); };
+canvas.addEventListener('pointerup', endDrag);
+canvas.addEventListener('pointercancel', endDrag);
+canvas.addEventListener('wheel', e => {
+  e.preventDefault(); beginManual();
+  manual.radius = clamp(manual.radius * (1 + e.deltaY * 0.001), 4, 40);
+}, { passive: false });
+
+/* ---------------------------------------------------------------------------
+ * Frame loop
+ * ------------------------------------------------------------------------- */
+const clock = new THREE.Clock();
+let time = 0, first = true, hudAcc = 0;
+const camAuto = new THREE.Vector3(), camManual = new THREE.Vector3(), camFinal = new THREE.Vector3();
+const skyHorizon = skyMat.uniforms.uHorizon.value;
+function orbitPos(out, theta, phi, radius) {
+  const sp = Math.sin(phi);
+  out.set(TARGET.x + radius * sp * Math.sin(theta), TARGET.y + radius * Math.cos(phi), TARGET.z + radius * sp * Math.cos(theta));
+  out.y = Math.max(out.y, GROUND_Y + 0.4);   // never below the garden
+  return out;
+}
+
+function frame() {
+  requestAnimationFrame(frame);
+  const dt = Math.min(clock.getDelta(), 0.1);
+  time += dt;
+
+  // --- sun: tween toward the selected preset ---
+  const P = SUN_PRESETS[sunIdx];
+  const k = first ? 1 : damp(2.5, dt);
+  sunDir.lerp(P.dir, k).normalize();
+  sun.color.lerp(P.color, k);
+  sun.intensity = lerp(sun.intensity, P.intensity, k);
+  hemi.intensity = lerp(hemi.intensity, P.hemi, k);
+  skyHorizon.lerp(P.horizon, k);
+  scene.fog.color.copy(skyHorizon);
+  renderer.setClearColor(skyHorizon);
+  placeSun();
+  skyMat.uniforms.uSunDir.value.copy(sunDir);
+
+  // --- breeze: every registered pivot rocks on two incommensurate sines ---
+  if (!reducedMotion) {
+    for (let i = 0; i < swayers.length; i++) {
+      const s = swayers[i];
+      s.obj.rotation[s.axis] = s.base + s.amp * (Math.sin(time * s.freq + s.phase) + 0.5 * Math.sin(time * s.freq * 2.31 + s.phase * 1.7));
+    }
+  }
+
+  // --- exploded view: each part slides along the offset stored when it was built ---
+  const explWant = exploded ? 1 : 0;
+  if (explodeT !== explWant) {
+    explodeT += (explWant - explodeT) * (reducedMotion ? 1 : damp(2.4, dt));
+    if (Math.abs(explWant - explodeT) < 5e-4) explodeT = explWant;
+    explodeE = smoothstep(0, 1, explodeT);
+    for (let i = 0; i < parts.length; i++) {
+      const p = parts[i];
+      p.obj.position.copy(p.home).addScaledVector(p.expl, explodeE);
+      p.obj.updateMatrix();
+    }
+  }
+
+  // --- build sequence: the site figure lays the next part ---
+  buildFrame(dt);
+  // Rise to take in the crane while the roof slab is flying.
+  const wantLift = buildOn && parts[buildOrder[Math.min(buildIdx, buildOrder.length - 1)]].kind === 'roof' ? 1 : 0;
+  buildLift += (wantLift - buildLift) * damp(1.6, dt);
+
+  // --- camera: drifting hero orbit, blended with manual orbit; manual releases after 5 s idle ---
+  const drift = reducedMotion ? 0 : 1;
+  TARGET.y = TARGET_Y + 2.0 * explodeE + 1.5 * buildLift;   // the spread, and the lift, are taller than the building
+  orbitPos(camAuto,
+    HERO.theta + drift * 0.09 * Math.sin(time * 2 * Math.PI / 41),
+    HERO.phi + drift * 0.025 * Math.sin(time * 2 * Math.PI / 57 + 1),
+    HERO.radius * (1 + 0.8 * explodeE + 0.3 * buildLift) + drift * 0.6 * Math.sin(time * 2 * Math.PI / 47 + 2));
+  const wantManual = manual.dragging || (time - manual.lastInput) < 5;
+  manual.weight += ((wantManual ? 1 : 0) - manual.weight) * damp(3, dt);
+  if (manual.weight > 0.001) {
+    orbitPos(camManual, manual.theta, manual.phi, manual.radius);
+    camFinal.lerpVectors(camAuto, camManual, manual.weight);
+  } else camFinal.copy(camAuto);
+  camera.position.copy(camFinal);
+  camera.lookAt(TARGET);
+  hintEl.classList.toggle('manual', manual.weight > 0.5);
+  dotEl.classList.toggle('off', manual.weight > 0.5);
+
+  // --- HUD: sun azimuth / elevation at 10 Hz ---
+  hudAcc += dt;
+  if (hudAcc > 0.1 || first) {
+    hudAcc = 0;
+    const az = ((Math.atan2(sunDir.x, sunDir.z) * 180 / Math.PI) % 360 + 360) % 360;   // 0 = north (+z), 90 = east (+x)
+    const el = Math.asin(clamp(sunDir.y, -1, 1)) * 180 / Math.PI;
+    sunRowEl.textContent = String(Math.round(az)).padStart(3, '0') + '° / ' + String(Math.round(el)).padStart(2, '0') + '°';
+  }
+
+  first = false;
+  renderer.render(scene, camera);
+}
+
+function onResize() {
+  const w = window.innerWidth, h = window.innerHeight;
+  camera.aspect = w / h; camera.updateProjectionMatrix();
+  renderer.setSize(w, h, false);
+}
+window.addEventListener('resize', onResize);
+onResize();
+frame();
+})();
+</script>
+</body>
+</html>
